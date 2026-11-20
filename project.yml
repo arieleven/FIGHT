@@ -54,3 +54,33 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES
         SKIP_INSTALL: YES
+
+  FIGHTTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/FIGHTTests
+      - path: Sources/App/Models.swift
+      - path: Sources/App/HRVMath.swift
+      - path: Sources/App/CoachEngine.swift
+      - path: Sources/App/CampPlanner.swift
+      - path: Sources/App/BagCoach.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.shon.fight.tests
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  FIGHT:
+    build:
+      targets:
+        FIGHT: all
+  FIGHTTests:
+    build:
+      targets:
+        FIGHTTests: [test]
+    test:
+      config: Debug
+      targets:
+        - FIGHTTests
