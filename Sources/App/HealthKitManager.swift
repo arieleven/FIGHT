@@ -1,7 +1,7 @@
 import Foundation
 import HealthKit
 
-/// Saves finished CoospoTracker sessions to Apple Health as workouts,
+/// Saves finished FIGHT sessions to Apple Health as workouts,
 /// including the full heart-rate trace and active energy.
 @MainActor
 final class HealthKitManager: ObservableObject {
@@ -13,9 +13,9 @@ final class HealthKitManager: ObservableObject {
     @Published private(set) var savedWorkoutIDs: Set<UUID> = []
 
     private let store = HKHealthStore()
-    private let autoSaveKey = "coospo_healthkit_autosave_v1"
-    private let savedIDsKey = "coospo_healthkit_saved_ids_v1"
-    private let authorizedKey = "coospo_healthkit_authorized_v1"
+    private let autoSaveKey = "fight_healthkit_autosave_v1"
+    private let savedIDsKey = "fight_healthkit_saved_ids_v1"
+    private let authorizedKey = "fight_healthkit_authorized_v1"
 
     private let heartRateType = HKQuantityType(.heartRate)
     private let activeEnergyType = HKQuantityType(.activeEnergyBurned)
@@ -69,7 +69,7 @@ final class HealthKitManager: ObservableObject {
     /// Writes the workout, its heart-rate samples and active calories to Health.
     /// Returns true on success. Safe to call twice: already-saved workouts are skipped.
     @discardableResult
-    func save(workout: SavedWorkout, samples: [HeartRatePoint]) async -> Bool {
+    func save(workout: SavedWorkout, samples: [HeartRatePoint], sensor: SensorInfo? = nil) async -> Bool {
         guard isAvailable else { return false }
         guard !savedWorkoutIDs.contains(workout.id) else { return true }
         guard workout.duration >= 60 else {
@@ -87,9 +87,9 @@ final class HealthKitManager: ObservableObject {
         config.locationType = Self.locationType(for: workout.category)
 
         let device = HKDevice(
-            name: "CooSpo Heart Rate Monitor",
-            manufacturer: "CooSpo",
-            model: "HW9",
+            name: sensor?.name ?? "Heart Rate Monitor",
+            manufacturer: sensor?.manufacturer,
+            model: sensor?.model,
             hardwareVersion: nil,
             firmwareVersion: nil,
             softwareVersion: nil,
@@ -135,7 +135,7 @@ final class HealthKitManager: ObservableObject {
                         if let error {
                             cont.resume(throwing: error)
                         } else if !success {
-                            cont.resume(throwing: NSError(domain: "CoospoHealth", code: 1,
+                            cont.resume(throwing: NSError(domain: "FightHealth", code: 1,
                                 userInfo: [NSLocalizedDescriptionKey: "Health rejected the workout samples"]))
                         } else {
                             cont.resume()
@@ -147,12 +147,12 @@ final class HealthKitManager: ObservableObject {
             var metadata: [String: Any] = [
                 HKMetadataKeyExternalUUID: workout.id.uuidString,
                 HKMetadataKeyIndoorWorkout: config.locationType != .outdoor,
-                "CoospoDiscipline": workout.category.rawValue,
-                "CoospoDrill": workout.drillTag.rawValue,
-                "CoospoRPE": workout.rpe
+                "FightDiscipline": workout.category.rawValue,
+                "FightDrill": workout.drillTag.rawValue,
+                "FightRPE": workout.rpe
             ]
             if !workout.notes.isEmpty {
-                metadata["CoospoNotes"] = workout.notes
+                metadata["FightNotes"] = workout.notes
             }
             try await builder.addMetadata(metadata)
 

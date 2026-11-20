@@ -1,4 +1,4 @@
-name: Build Unsigned IPA
+name: Build FIGHT IPA
 
 on:
   push:
@@ -23,8 +23,8 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild \
-            -project CoospoTracker.xcodeproj \
-            -scheme CoospoTracker \
+            -project FIGHT.xcodeproj \
+            -scheme FIGHT \
             -configuration Release \
             -sdk iphoneos \
             -derivedDataPath build \
@@ -38,8 +38,8 @@ jobs:
       - name: Verify Info.plist keys in built products
         run: |
           set -e
-          APP=build/Build/Products/Release-iphoneos/CoospoTracker.app
-          WIDGET="$APP/PlugIns/CoospoWidgetExtension.appex"
+          APP=build/Build/Products/Release-iphoneos/FIGHT.app
+          WIDGET="$APP/PlugIns/FIGHTWidget.appex"
           echo "--- App Info.plist ---";    plutil -p "$APP/Info.plist"
           echo "--- Widget Info.plist ---"; plutil -p "$WIDGET/Info.plist"
           plutil -extract NSBluetoothAlwaysUsageDescription raw "$APP/Info.plist"
@@ -57,16 +57,16 @@ jobs:
         run: |
           set -e
           mkdir -p Payload
-          cp -R build/Build/Products/Release-iphoneos/CoospoTracker.app Payload/
-          APP=Payload/CoospoTracker.app
-          codesign --force --sign - --timestamp=none "$APP/PlugIns/CoospoWidgetExtension.appex"
-          codesign --force --sign - --timestamp=none --entitlements Config/CoospoTracker.entitlements "$APP"
+          cp -R build/Build/Products/Release-iphoneos/FIGHT.app Payload/
+          APP=Payload/FIGHT.app
+          codesign --force --sign - --timestamp=none "$APP/PlugIns/FIGHTWidget.appex"
+          codesign --force --sign - --timestamp=none --entitlements Config/FIGHT.entitlements "$APP"
           codesign -d --entitlements - "$APP" 2>/dev/null | grep -q com.apple.developer.healthkit
           echo "HealthKit entitlement embedded."
-          zip -qry CoospoTracker.ipa Payload
+          zip -qry FIGHT.ipa Payload
 
       - name: Upload Unsigned IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: CoospoTracker-IPA
-          path: CoospoTracker.ipa
+          name: FIGHT-IPA
+          path: FIGHT.ipa

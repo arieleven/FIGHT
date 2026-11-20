@@ -72,7 +72,7 @@ struct HistoryListView: View {
                     ContentUnavailableView(
                         "No Workouts Logged",
                         systemImage: "heart.text.square",
-                        description: Text("Recorded sessions save automatically to On My iPhone / Coospo Workout.")
+                        description: Text("Recorded sessions save automatically to On My iPhone / FIGHT.")
                     )
                 } else {
                     ForEach(filteredWorkouts) { workout in

@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CoospoTrackerApp: App {
+struct FightApp: App {
     @StateObject private var bleManager = BLEHeartRateManager()
     @StateObject private var workoutStore = WorkoutStore()
     @StateObject private var healthKit = HealthKitManager()

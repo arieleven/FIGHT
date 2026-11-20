@@ -2,63 +2,142 @@ import Foundation
 import CoreBluetooth
 import SwiftUI
 
+/// Where the sensor sits on the body (Bluetooth Body Sensor Location, 0x2A38).
+enum SensorBodyLocation: UInt8 {
+    case other = 0, chest, wrist, finger, hand, earLobe, foot
+
+    var label: String {
+        switch self {
+        case .other: return "Other"
+        case .chest: return "Chest strap"
+        case .wrist: return "Wrist / arm"
+        case .finger: return "Finger"
+        case .hand: return "Hand"
+        case .earLobe: return "Ear"
+        case .foot: return "Foot"
+        }
+    }
+
+    /// Electrical (ECG) chest straps give the cleanest beat-to-beat data.
+    var isChest: Bool { self == .chest }
+}
+
+/// What we know about the connected sensor, used for display and Apple Health.
+struct SensorInfo: Equatable {
+    var name: String
+    var manufacturer: String?
+    var model: String?
+    var bodyLocation: SensorBodyLocation?
+
+    var detailLine: String {
+        [manufacturer, model, bodyLocation?.label].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " • ")
+    }
+}
+
 struct DiscoveredHRDevice: Identifiable, Equatable {
     let id: UUID
     let name: String
     let rssi: Int
     let peripheral: CBPeripheral
+    /// True when the device advertises the Heart Rate service or is already connected to iOS with it.
+    let advertisesHeartRate: Bool
+    /// True when the name looks like a heart-rate sensor even without the service advertised.
+    let looksLikeHeartRate: Bool
+
+    var isLikelyHeartRate: Bool { advertisesHeartRate || looksLikeHeartRate }
 
     static func == (lhs: DiscoveredHRDevice, rhs: DiscoveredHRDevice) -> Bool {
-        lhs.id == rhs.id && lhs.rssi == rhs.rssi && lhs.name == rhs.name
+        lhs.id == rhs.id && lhs.rssi == rhs.rssi && lhs.name == rhs.name && lhs.advertisesHeartRate == rhs.advertisesHeartRate
+    }
+
+    var signalBars: Int {
+        switch rssi {
+        case (-60)...: return 3
+        case (-75)..<(-60): return 2
+        default: return 1
+        }
     }
 }
 
+/// Works with any monitor implementing the standard Bluetooth Heart Rate Profile:
+/// chest straps, optical armbands, and watches in heart-rate broadcast mode.
 @MainActor
 final class BLEHeartRateManager: NSObject, ObservableObject {
     @Published var isBluetoothPoweredOn = false
     @Published var isScanning = false
     @Published var isConnected = false
-    @Published var connectedDeviceName: String = "CooSpo HRM"
-    @Published var statusMessage: String = "Ready to scan for CooSpo strap"
+    @Published var isConnecting = false
+    @Published var connectedDeviceName: String = "Heart Rate Monitor"
+    @Published var sensorInfo: SensorInfo?
+    @Published var statusMessage: String = "Ready to scan for heart rate monitors"
     @Published var currentBPM: Int = 0
     @Published var batteryLevel: Int?
     @Published var sensorContactDetected: Bool?
+    @Published var isSignalLost = false
     @Published var discoveredDevices: [DiscoveredHRDevice] = []
+    @Published var connectionError: String?
 
     private var centralManager: CBCentralManager!
     private var connectedPeripheral: CBPeripheral?
     private var latestRRBuffer: [Double] = []
-    private let lastDeviceUUIDKey = "coospo_last_device_uuid_v1"
+    private var lastValidPacket: Date?
+    private var connectStartedAt: Date?
+    private var watchdog: Timer?
+    private var hasHeartRateService = false
+    private let lastDeviceUUIDKey = "fight_last_device_uuid_v1"
 
-    // Standard Bluetooth SIG Heart Rate & Battery UUIDs
+    // Standard Bluetooth SIG UUIDs
     nonisolated private let hrServiceUUID = CBUUID(string: "180D")
-	nonisolated private let hrMeasurementUUID = CBUUID(string: "2A37")
-	nonisolated private let batteryServiceUUID = CBUUID(string: "180F")
-	nonisolated private let batteryLevelUUID = CBUUID(string: "2A19")
+    nonisolated private let hrMeasurementUUID = CBUUID(string: "2A37")
+    nonisolated private let bodyLocationUUID = CBUUID(string: "2A38")
+    nonisolated private let batteryServiceUUID = CBUUID(string: "180F")
+    nonisolated private let batteryLevelUUID = CBUUID(string: "2A19")
+    nonisolated private let deviceInfoServiceUUID = CBUUID(string: "180A")
+    nonisolated private let manufacturerUUID = CBUUID(string: "2A29")
+    nonisolated private let modelUUID = CBUUID(string: "2A24")
+
+    /// Name fragments used by common heart-rate sensors and watches that don't
+    /// always advertise the Heart Rate service until connected.
+    private static let heartRateNameHints = [
+        "hrm", "heart", "pulse", "polar", "garmin", "wahoo", "tickr", "whoop", "suunto", "coros",
+        "scosche", "rhythm", "verity", "magene", "igpsport", "amazfit", "zepp", "xoss", "moofit",
+        "cycplus", "kalenji", "geonaute", "decathlon", "chileaf", "bryton", "lezyne", "myzone",
+        "fitcare", "beat", "h10", "h9", "h7", "h6", "oh1", "armband", "strap"
+    ]
 
     override init() {
         super.init()
         centralManager = CBCentralManager(delegate: self, queue: nil, options: [
-            CBCentralManagerOptionRestoreIdentifierKey: "com.shon.coospotracker.blecentral"
+            CBCentralManagerOptionRestoreIdentifierKey: "com.shon.fight.blecentral"
         ])
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.watchdogTick() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        watchdog = t
     }
 
+    // MARK: Public API
+
+    /// Scans for every nearby BLE device. Devices advertising the Heart Rate
+    /// service (or whose name looks like a sensor) are ranked first; the rest
+    /// are available via "Show all devices" for monitors that hide the service.
     func startScanning() {
         guard centralManager.state == .poweredOn else {
             statusMessage = "Turn on Bluetooth in iOS Settings"
             return
         }
         discoveredDevices.removeAll()
+        connectionError = nil
         isScanning = true
-        statusMessage = "Scanning for Heart Rate Monitors..."
+        statusMessage = "Scanning for heart rate monitors…"
 
-        // Also check already-connected system HR peripherals
-        let connected = centralManager.retrieveConnectedPeripherals(withServices: [hrServiceUUID])
-        for p in connected {
-            addOrUpdateDevice(peripheral: p, rssi: -50)
+        // Sensors already connected to iOS (or another app) don't advertise.
+        for p in centralManager.retrieveConnectedPeripherals(withServices: [hrServiceUUID]) {
+            addOrUpdateDevice(peripheral: p, rssi: -50, advertisesHR: true)
         }
 
-        centralManager.scanForPeripherals(withServices: [hrServiceUUID], options: [
+        centralManager.scanForPeripherals(withServices: nil, options: [
             CBCentralManagerScanOptionAllowDuplicatesKey: true
         ])
     }
@@ -66,25 +145,35 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     func stopScanning() {
         centralManager.stopScan()
         isScanning = false
-        if !isConnected {
-            statusMessage = discoveredDevices.isEmpty ? "Tap Scan to find CooSpo" : "Select your CooSpo strap"
+        if !isConnected && !isConnecting {
+            statusMessage = discoveredDevices.isEmpty ? "Tap Scan to find your heart rate monitor" : "Select your heart rate monitor"
         }
     }
 
     func connect(to device: DiscoveredHRDevice) {
         stopScanning()
-        statusMessage = "Connecting to \(device.name)..."
+        if let current = connectedPeripheral, current.identifier != device.id {
+            centralManager.cancelPeripheralConnection(current)
+        }
+        connectionError = nil
+        isConnecting = true
+        connectStartedAt = Date()
+        hasHeartRateService = false
+        statusMessage = "Connecting to \(device.name)…"
         connectedPeripheral = device.peripheral
         connectedPeripheral?.delegate = self
+        sensorInfo = SensorInfo(name: device.name)
         UserDefaults.standard.set(device.id.uuidString, forKey: lastDeviceUUIDKey)
         centralManager.connect(device.peripheral, options: nil)
     }
 
     func disconnect() {
+        UserDefaults.standard.removeObject(forKey: lastDeviceUUIDKey)
         if let p = connectedPeripheral {
             centralManager.cancelPeripheralConnection(p)
         }
-        UserDefaults.standard.removeObject(forKey: lastDeviceUUIDKey)
+        connectedPeripheral = nil
+        sensorInfo = nil
         cleanupConnection(message: "Disconnected")
     }
 
@@ -94,21 +183,67 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         return copy
     }
 
-    private func addOrUpdateDevice(peripheral: CBPeripheral, rssi: Int) {
-        let name = peripheral.name ?? "BLE Heart Rate Monitor"
-        let item = DiscoveredHRDevice(id: peripheral.identifier, name: name, rssi: rssi, peripheral: peripheral)
+    // MARK: Internals
+
+    private func watchdogTick() {
+        // Connection attempts that never complete (sensor asleep / out of range).
+        if isConnecting, let started = connectStartedAt, Date().timeIntervalSince(started) > 15 {
+            if let p = connectedPeripheral { centralManager.cancelPeripheralConnection(p) }
+            isConnecting = false
+            connectStartedAt = nil
+            connectionError = "Couldn't reach the sensor. Wake it up (wear it or moisten the pads) and try again."
+            statusMessage = "Connection timed out"
+            return
+        }
+        // Connected, but the sensor stopped sending heart rate: clear the stale value
+        // so it isn't recorded as if it were live.
+        guard isConnected, hasHeartRateService else { return }
+        let silentFor = lastValidPacket.map { Date().timeIntervalSince($0) } ?? .infinity
+        if silentFor > 5 {
+            if currentBPM != 0 { currentBPM = 0 }
+            if !isSignalLost {
+                isSignalLost = true
+                statusMessage = "Connected • no heart-rate signal"
+            }
+        }
+    }
+
+    private func addOrUpdateDevice(peripheral: CBPeripheral, rssi: Int, advertisesHR: Bool, advertisedName: String? = nil) {
+        let rawName = peripheral.name ?? advertisedName
+        let name = (rawName?.isEmpty == false ? rawName : nil) ?? (advertisesHR ? "Heart Rate Monitor" : "Unnamed device")
+        let lower = name.lowercased()
+        let looksHR = Self.heartRateNameHints.contains { lower.contains($0) }
+            || lower.range(of: #"\bhr\b"#, options: .regularExpression) != nil
+
         if let idx = discoveredDevices.firstIndex(where: { $0.id == peripheral.identifier }) {
-            discoveredDevices[idx] = item
+            let old = discoveredDevices[idx]
+            let mergedAdvertises = old.advertisesHeartRate || advertisesHR
+            // Throttle UI churn from duplicate advertisements.
+            guard abs(old.rssi - rssi) >= 4 || mergedAdvertises != old.advertisesHeartRate || old.name != name else { return }
+            discoveredDevices[idx] = DiscoveredHRDevice(id: peripheral.identifier, name: name, rssi: rssi, peripheral: peripheral,
+                                                        advertisesHeartRate: mergedAdvertises, looksLikeHeartRate: looksHR)
         } else {
-            discoveredDevices.append(item)
+            // Ignore anonymous devices that give no hint of being a sensor.
+            guard rawName != nil || advertisesHR else { return }
+            discoveredDevices.append(DiscoveredHRDevice(id: peripheral.identifier, name: name, rssi: rssi, peripheral: peripheral,
+                                                        advertisesHeartRate: advertisesHR, looksLikeHeartRate: looksHR))
+        }
+        discoveredDevices.sort {
+            if $0.isLikelyHeartRate != $1.isLikelyHeartRate { return $0.isLikelyHeartRate }
+            return $0.rssi > $1.rssi
         }
     }
 
     private func cleanupConnection(message: String) {
         isConnected = false
+        isConnecting = false
+        connectStartedAt = nil
+        hasHeartRateService = false
         currentBPM = 0
         batteryLevel = nil
         sensorContactDetected = nil
+        isSignalLost = false
+        lastValidPacket = nil
         statusMessage = message
     }
 
@@ -140,6 +275,14 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
 
         if bpm > 25 && bpm < 250 {
             currentBPM = bpm
+            lastValidPacket = Date()
+            if isSignalLost {
+                isSignalLost = false
+                statusMessage = "Connected • Streaming HR"
+            }
+        } else if bpm == 0 {
+            // Many sensors send 0 when they can't get a reading (e.g. strap off).
+            currentBPM = 0
         }
 
         if energyExpendedPresent {
@@ -161,26 +304,98 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
             }
         }
     }
+
+    private func handleConnected(_ peripheral: CBPeripheral) {
+        isConnecting = false
+        connectStartedAt = nil
+        isConnected = true
+        connectedDeviceName = peripheral.name ?? sensorInfo?.name ?? "Heart Rate Monitor"
+        if sensorInfo == nil || sensorInfo?.name != connectedDeviceName {
+            sensorInfo = SensorInfo(name: connectedDeviceName)
+        }
+        statusMessage = "Connected • finding heart rate…"
+        peripheral.discoverServices([hrServiceUUID, batteryServiceUUID, deviceInfoServiceUUID])
+    }
+
+    private func handleServices(_ peripheral: CBPeripheral) {
+        let services = peripheral.services ?? []
+        guard services.contains(where: { $0.uuid == hrServiceUUID }) else {
+            // Connected to something that isn't a heart-rate sensor.
+            let name = peripheral.name ?? "This device"
+            if UserDefaults.standard.string(forKey: lastDeviceUUIDKey) == peripheral.identifier.uuidString {
+                UserDefaults.standard.removeObject(forKey: lastDeviceUUIDKey)
+            }
+            centralManager.cancelPeripheralConnection(peripheral)
+            connectedPeripheral = nil
+            sensorInfo = nil
+            cleanupConnection(message: "Not a heart rate monitor")
+            connectionError = "\(name) doesn't provide heart-rate data. If it's a watch, turn on its heart-rate broadcast mode and scan again."
+            return
+        }
+        hasHeartRateService = true
+        lastValidPacket = Date() // give the sensor 5 s before flagging no signal
+        statusMessage = "Connected • Streaming HR"
+        for service in services {
+            if service.uuid == hrServiceUUID {
+                peripheral.discoverCharacteristics([hrMeasurementUUID, bodyLocationUUID], for: service)
+            } else if service.uuid == batteryServiceUUID {
+                peripheral.discoverCharacteristics([batteryLevelUUID], for: service)
+            } else if service.uuid == deviceInfoServiceUUID {
+                peripheral.discoverCharacteristics([manufacturerUUID, modelUUID], for: service)
+            }
+        }
+    }
+
+    private func handleValue(uuid: CBUUID, data: Data) {
+        switch uuid {
+        case hrMeasurementUUID:
+            parseHeartRatePacket(data)
+        case batteryLevelUUID:
+            if let b = data.first { batteryLevel = Int(b) }
+        case bodyLocationUUID:
+            if let b = data.first { sensorInfo?.bodyLocation = SensorBodyLocation(rawValue: b) ?? .other }
+        case manufacturerUUID:
+            sensorInfo?.manufacturer = Self.cleanString(data)
+        case modelUUID:
+            sensorInfo?.model = Self.cleanString(data)
+        default:
+            break
+        }
+    }
+
+    private static func cleanString(_ data: Data) -> String? {
+        guard let s = String(data: data, encoding: .utf8) else { return nil }
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "\0")))
+        return trimmed.isEmpty ? nil : trimmed
+    }
 }
 
 extension BLEHeartRateManager: CBCentralManagerDelegate {
     nonisolated func centralManagerDidUpdateState(_ central: CBCentralManager) {
         Task { @MainActor in
             isBluetoothPoweredOn = (central.state == .poweredOn)
-            if central.state == .poweredOn {
-                statusMessage = "Bluetooth Ready"
-                // Auto-reconnect to saved CooSpo strap if available
+            switch central.state {
+            case .poweredOn:
+                if isConnected { return }
+                statusMessage = "Bluetooth ready"
+                // Auto-reconnect to the last used sensor.
                 if let savedStr = UserDefaults.standard.string(forKey: lastDeviceUUIDKey),
                    let savedUUID = UUID(uuidString: savedStr),
                    let known = central.retrievePeripherals(withIdentifiers: [savedUUID]).first {
                     connectedPeripheral = known
                     connectedPeripheral?.delegate = self
-                    statusMessage = "Reconnecting to \(known.name ?? "CooSpo")..."
+                    sensorInfo = SensorInfo(name: known.name ?? "Heart Rate Monitor")
+                    isConnecting = true
+                    connectStartedAt = Date()
+                    statusMessage = "Reconnecting to \(known.name ?? "your sensor")…"
                     central.connect(known, options: nil)
                 }
-            } else {
+            case .unauthorized:
                 isScanning = false
-                cleanupConnection(message: "Bluetooth is Off")
+                cleanupConnection(message: "Allow Bluetooth for FIGHT in iOS Settings")
+            default:
+                isScanning = false
+                cleanupConnection(message: "Bluetooth is off")
             }
         }
     }
@@ -192,10 +407,7 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
                 self.connectedPeripheral = first
                 self.connectedPeripheral?.delegate = self
                 if first.state == .connected {
-                    self.isConnected = true
-                    self.connectedDeviceName = first.name ?? "CooSpo HRM"
-                    self.statusMessage = "Connected (Restored)"
-                    first.discoverServices([self.hrServiceUUID, self.batteryServiceUUID])
+                    self.handleConnected(first)
                 }
             }
         }
@@ -204,31 +416,35 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let rssiVal = RSSI.intValue
         guard rssiVal != 127 else { return }
+        let hrUUID = CBUUID(string: "180D")
+        let advertised = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID]) ?? []
+        let overflow = (advertisementData[CBAdvertisementDataOverflowServiceUUIDsKey] as? [CBUUID]) ?? []
+        let advertisesHR = advertised.contains(hrUUID) || overflow.contains(hrUUID)
+        let advName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         Task { @MainActor in
-            addOrUpdateDevice(peripheral: peripheral, rssi: rssiVal)
+            addOrUpdateDevice(peripheral: peripheral, rssi: rssiVal, advertisesHR: advertisesHR, advertisedName: advName)
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         Task { @MainActor in
-            isConnected = true
-            connectedDeviceName = peripheral.name ?? "CooSpo HRM"
-            statusMessage = "Connected • Streaming HR"
-            peripheral.discoverServices([hrServiceUUID, batteryServiceUUID])
+            handleConnected(peripheral)
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         Task { @MainActor in
-            cleanupConnection(message: "Couldn't connect — wake the strap (moisten pads) and tap Scan")
+            cleanupConnection(message: "Couldn't connect")
+            connectionError = "Couldn't connect to \(peripheral.name ?? "the sensor"). Wake it up (wear it or moisten the pads) and make sure no other app is using it."
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         Task { @MainActor in
-            cleanupConnection(message: "Signal lost — reconnecting...")
-            // Automatic reconnect if strap briefly drops
-            if UserDefaults.standard.string(forKey: lastDeviceUUIDKey) == peripheral.identifier.uuidString {
+            let wasSaved = UserDefaults.standard.string(forKey: lastDeviceUUIDKey) == peripheral.identifier.uuidString
+            cleanupConnection(message: wasSaved ? "Signal lost — reconnecting…" : "Disconnected")
+            // Automatic reconnect if the sensor briefly drops (iOS keeps trying indefinitely).
+            if wasSaved {
                 centralManager.connect(peripheral, options: nil)
             }
         }
@@ -237,104 +453,148 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
 
 extension BLEHeartRateManager: CBPeripheralDelegate {
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard let services = peripheral.services else { return }
-        for service in services {
-            if service.uuid == hrServiceUUID {
-                peripheral.discoverCharacteristics([hrMeasurementUUID], for: service)
-            } else if service.uuid == batteryServiceUUID {
-                peripheral.discoverCharacteristics([batteryLevelUUID], for: service)
-            }
+        Task { @MainActor in
+            handleServices(peripheral)
         }
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard let chars = service.characteristics else { return }
+        let hrMeasurement = CBUUID(string: "2A37")
+        let battery = CBUUID(string: "2A19")
+        let readOnce: Set<CBUUID> = [CBUUID(string: "2A38"), CBUUID(string: "2A29"), CBUUID(string: "2A24")]
         for ch in chars {
-            if ch.uuid == hrMeasurementUUID {
+            if ch.uuid == hrMeasurement {
                 peripheral.setNotifyValue(true, for: ch)
-            } else if ch.uuid == batteryLevelUUID {
+            } else if ch.uuid == battery {
                 peripheral.readValue(for: ch)
-                peripheral.setNotifyValue(true, for: ch)
+                if ch.properties.contains(.notify) {
+                    peripheral.setNotifyValue(true, for: ch)
+                }
+            } else if readOnce.contains(ch.uuid) {
+                peripheral.readValue(for: ch)
             }
         }
     }
 
     nonisolated func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard let data = characteristic.value else { return }
+        let uuid = characteristic.uuid
         Task { @MainActor in
-            if characteristic.uuid == hrMeasurementUUID {
-                parseHeartRatePacket(data)
-            } else if characteristic.uuid == batteryLevelUUID, let firstByte = data.first {
-                batteryLevel = Int(firstByte)
-            }
+            handleValue(uuid: uuid, data: data)
         }
     }
 }
 
+// MARK: - Sensor picker
+
 struct DeviceScannerSheet: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @Environment(\.dismiss) private var dismiss
+    @State private var showAllDevices = false
+
+    private var heartRateDevices: [DiscoveredHRDevice] {
+        bleManager.discoveredDevices.filter { $0.isLikelyHeartRate && $0.id != bleManager.sensorInfoPeripheralID }
+    }
+
+    private var otherDevices: [DiscoveredHRDevice] {
+        bleManager.discoveredDevices.filter { !$0.isLikelyHeartRate }
+    }
 
     var body: some View {
         NavigationStack {
             List {
                 if bleManager.isConnected {
-                    Section("Connected Sensor") {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(bleManager.connectedDeviceName)
-                                    .font(.headline)
+                    Section("Connected") {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Image(systemName: "heart.circle.fill")
+                                    .font(.title2)
+                                    .foregroundStyle(bleManager.isSignalLost ? .orange : .red)
+                                    .accessibilityHidden(true)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(bleManager.connectedDeviceName)
+                                        .font(.headline)
+                                    if let detail = bleManager.sensorInfo?.detailLine, !detail.isEmpty {
+                                        Text(detail)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                if bleManager.currentBPM > 0 {
+                                    Text("\(bleManager.currentBPM) BPM")
+                                        .font(.subheadline.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(.red)
+                                }
+                            }
+                            HStack(spacing: 12) {
                                 Text(bleManager.statusMessage)
                                     .font(.caption)
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(bleManager.isSignalLost ? .orange : .green)
+                                if let battery = bleManager.batteryLevel {
+                                    Label("\(battery)%", systemImage: battery > 20 ? "battery.75" : "battery.25")
+                                        .font(.caption)
+                                        .foregroundStyle(battery > 20 ? Color.secondary : Color.orange)
+                                }
                             }
-                            Spacer()
                             Button("Disconnect", role: .destructive) {
                                 bleManager.disconnect()
                             }
                             .buttonStyle(.bordered)
+                            .controlSize(.small)
                         }
+                        .padding(.vertical, 2)
                     }
                 }
 
-                Section("Available Heart Rate Monitors") {
-                    if bleManager.discoveredDevices.isEmpty {
+                if let error = bleManager.connectionError {
+                    Section {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                Section {
+                    if heartRateDevices.isEmpty {
                         HStack {
-                            ProgressView()
-                                .padding(.trailing, 8)
-                            Text("Searching for CooSpo H9Z / HW807...")
+                            if bleManager.isScanning {
+                                ProgressView().padding(.trailing, 8)
+                            }
+                            Text(bleManager.isScanning ? "Searching for heart rate monitors…" : "No monitors found")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
                     } else {
-                        ForEach(bleManager.discoveredDevices) { device in
-                            Button {
-                                bleManager.connect(to: device)
-                                dismiss()
-                            } label: {
-                                HStack {
-                                    Image(systemName: "heart.circle.fill")
-                                        .font(.title2)
-                                        .foregroundStyle(.red)
-                                    VStack(alignment: .leading) {
-                                        Text(device.name)
-                                            .font(.headline)
-                                            .foregroundStyle(.primary)
-                                        Text("Signal: \(device.rssi) dBm")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                    Text("Connect")
-                                        .font(.caption.weight(.bold))
-                                        .foregroundStyle(.green)
-                                }
+                        ForEach(heartRateDevices) { device in
+                            deviceRow(device)
+                        }
+                    }
+                } header: {
+                    Text("Heart Rate Monitors")
+                } footer: {
+                    Text("Works with any Bluetooth heart rate monitor: chest straps, armbands, and watches with heart-rate broadcast turned on. Wear the sensor so it wakes up, and close other apps that may be connected to it.")
+                }
+
+                Section {
+                    Toggle("Show all nearby devices", isOn: $showAllDevices)
+                    if showAllDevices {
+                        if otherDevices.isEmpty {
+                            Text("No other named devices nearby")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(otherDevices) { device in
+                                deviceRow(device)
                             }
                         }
                     }
+                } footer: {
+                    Text("Some sensors only reveal their heart-rate service after connecting. If yours isn't listed above, find it here. FIGHT checks it and tells you if it doesn't provide heart rate.")
                 }
             }
-            .navigationTitle("CooSpo Sensors")
+            .navigationTitle("Heart Rate Sensors")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -360,5 +620,42 @@ struct DeviceScannerSheet: View {
                 bleManager.stopScanning()
             }
         }
+    }
+
+    private func deviceRow(_ device: DiscoveredHRDevice) -> some View {
+        Button {
+            bleManager.connect(to: device)
+        } label: {
+            HStack {
+                Image(systemName: device.isLikelyHeartRate ? "heart.circle.fill" : "dot.radiowaves.left.and.right")
+                    .font(.title2)
+                    .foregroundStyle(device.isLikelyHeartRate ? .red : .secondary)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(device.name)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    Text(device.advertisesHeartRate ? "Heart rate sensor" : (device.looksLikeHeartRate ? "Possible heart rate sensor" : "Unknown device"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if bleManager.isConnecting && bleManager.sensorInfo?.name == device.name {
+                    ProgressView()
+                } else {
+                    Image(systemName: "cellularbars", variableValue: Double(device.signalBars) / 3.0)
+                        .foregroundStyle(.secondary)
+                        .accessibilityLabel("Signal \(device.signalBars) of 3")
+                }
+            }
+        }
+        .accessibilityHint("Connects to this sensor")
+    }
+}
+
+extension BLEHeartRateManager {
+    /// Identifier of the connected sensor, so it isn't listed twice in the picker.
+    var sensorInfoPeripheralID: UUID? {
+        isConnected ? connectedPeripheral?.identifier : nil
     }
 }

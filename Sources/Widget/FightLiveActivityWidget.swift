@@ -3,13 +3,13 @@ import SwiftUI
 import ActivityKit
 
 @main
-struct CoospoLiveActivityBundle: WidgetBundle {
+struct FightLiveActivityBundle: WidgetBundle {
     var body: some Widget {
-        CoospoLiveActivityWidget()
+        FightLiveActivityWidget()
     }
 }
 
-struct CoospoLiveActivityWidget: Widget {
+struct FightLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkoutActivityAttributes.self) { context in
             HStack(spacing: 14) {

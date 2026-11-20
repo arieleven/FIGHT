@@ -1,4 +1,4 @@
-name: CoospoTracker
+name: FIGHT
 options:
   bundleIdPrefix: com.shon
   deploymentTarget:
@@ -10,17 +10,18 @@ settings:
     SWIFT_VERSION: "5.0"
     TARGETED_DEVICE_FAMILY: "1"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
-    MARKETING_VERSION: "2.0.0"
+    MARKETING_VERSION: "3.0.0"
     CURRENT_PROJECT_VERSION: "1"
 
 # IMPORTANT: there is intentionally NO `info:` block on either target.
 # XcodeGen's `info:` block REGENERATES (overwrites) the plist at that path,
-# which wiped the Bluetooth usage strings, background modes and NSExtension
-# from the committed plists. Pointing INFOPLIST_FILE at the files and leaving
-# `info:` out makes the committed Info.plist files the single source of truth.
+# which would wipe the Bluetooth usage strings, background modes and
+# NSExtension from the committed plists. Pointing INFOPLIST_FILE at the files
+# and leaving `info:` out makes the committed Info.plist files the single
+# source of truth.
 
 targets:
-  CoospoTracker:
+  FIGHT:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
@@ -29,15 +30,16 @@ targets:
       - path: Sources/Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.shon.coospotracker
-        PRODUCT_NAME: CoospoTracker
+        PRODUCT_BUNDLE_IDENTIFIER: com.shon.fight
+        PRODUCT_NAME: FIGHT
         INFOPLIST_FILE: Sources/App/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
-      - target: CoospoWidgetExtension
+      - target: FIGHTWidget
         embed: true
 
-  CoospoWidgetExtension:
+  FIGHTWidget:
     type: app-extension
     platform: iOS
     deploymentTarget: "17.0"
@@ -46,8 +48,8 @@ targets:
       - path: Sources/Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.shon.coospotracker.widget
-        PRODUCT_NAME: CoospoWidgetExtension
+        PRODUCT_BUNDLE_IDENTIFIER: com.shon.fight.widget
+        PRODUCT_NAME: FIGHTWidget
         INFOPLIST_FILE: Sources/Widget/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES

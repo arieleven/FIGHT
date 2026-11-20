@@ -268,7 +268,7 @@ struct ProfileSettingsView: View {
                     }
                 }
 
-                Section("iPhone Files App & Lossless Archive (.cspk)") {
+                Section("iPhone Files App & Lossless Archive") {
                     HStack {
                         Text("Fighter Profiles File")
                         Spacer()

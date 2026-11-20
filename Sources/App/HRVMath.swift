@@ -3,7 +3,7 @@ import Foundation
 /// Beat-to-beat (RR interval) analysis: artifact correction, HRV and
 /// DFA-alpha1 aerobic-threshold detection.
 ///
-/// Optical armbands (like the CooSpo HW9) produce usable RR at rest but noisy
+/// Optical armbands produce usable RR at rest but noisy
 /// RR during hard exercise, so every function reports or gates on data quality.
 enum HRVMath {
 

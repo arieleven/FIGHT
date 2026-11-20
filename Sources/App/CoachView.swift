@@ -356,7 +356,7 @@ struct CoachView: View {
             thresholdRow("Resting HR", "\(profile.restingHR) BPM",
                          report.measuredRestingHR.map { "morning checks: \($0)" } ?? "do morning checks to measure")
             if let c = report.rrCoverage {
-                Text("Beat-to-beat data was present in \(Int(c * 100))% of recent samples. Chest straps (e.g. CooSpo H808S) give the cleanest HRV and threshold detection; optical armbands are best at rest.")
+                Text("Beat-to-beat data was present in \(Int(c * 100))% of recent samples. Chest straps give the cleanest HRV and threshold detection; optical armbands are best at rest.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

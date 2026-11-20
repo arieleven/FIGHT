@@ -111,7 +111,7 @@ struct ReadinessCheckView: View {
                 .controlSize(.large)
             }
 
-            Text("HRV uses beat-to-beat data. Optical armbands like the HW9 work best while you're completely still; if the signal is too noisy, the check still records your resting heart rate.")
+            Text("HRV uses beat-to-beat data. Chest straps give the most accurate HRV. Armbands and watches work best while you're completely still. If the signal is too noisy, the check still records your resting heart rate.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }

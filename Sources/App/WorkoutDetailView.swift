@@ -118,7 +118,7 @@ struct WorkoutDetailView: View {
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                         if workout.isCompressedArchive {
-                            Text("CSPK ARCHIVED")
+                            Text("ARCHIVED")
                                 .font(.system(size: 9, weight: .heavy))
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)

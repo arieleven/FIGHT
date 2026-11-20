@@ -16,8 +16,6 @@ final class WorkoutStore: ObservableObject {
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
     private var cachedGhosts: [GhostSession] = []
 
-    private let legacyProfilesKey = "coospo_fighter_profiles_v2"
-    private let legacyActiveProfileKey = "coospo_active_profile_id_v2"
     private let archiveThresholdDays: TimeInterval = 7 * 24 * 60 * 60
 
     var activeProfile: AthleteProfile {
@@ -101,20 +99,6 @@ final class WorkoutStore: ObservableObject {
            !container.profiles.isEmpty {
             self.profiles = container.profiles
             self.activeProfileID = container.activeProfileID
-            return
-        }
-
-        if let legacyData = UserDefaults.standard.data(forKey: legacyProfilesKey),
-           let decoded = try? decoder.decode([AthleteProfile].self, from: legacyData),
-           !decoded.isEmpty {
-            self.profiles = decoded
-            if let savedIDStr = UserDefaults.standard.string(forKey: legacyActiveProfileKey),
-               let savedID = UUID(uuidString: savedIDStr) {
-                self.activeProfileID = savedID
-            } else {
-                self.activeProfileID = decoded[0].id
-            }
-            saveProfilesToDisk()
             return
         }
 
@@ -232,7 +216,7 @@ final class WorkoutStore: ObservableObject {
               let compressed = compressLZFSE(rawJSON) else {
             return workout
         }
-        let archiveName = "\(workout.id.uuidString).cspk"
+        let archiveName = "\(workout.id.uuidString).fpk"
         let archiveURL = archivesDirectory.appendingPathComponent(archiveName)
         try? compressed.write(to: archiveURL, options: .atomic)
 

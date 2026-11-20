@@ -1186,8 +1186,9 @@ struct LiveWorkoutView: View {
         workoutStore.save(saved)
         if healthKit.autoSaveEnabled {
             let hkSamples = saved.samples
+            let sensor = bleManager.sensorInfo
             Task {
-                await healthKit.save(workout: saved, samples: hkSamples)
+                await healthKit.save(workout: saved, samples: hkSamples, sensor: sensor)
             }
         }
         finishedWorkout = saved

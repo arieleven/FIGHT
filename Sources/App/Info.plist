@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Coospo Workout</string>
+	<string>FIGHT</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -25,13 +25,13 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>CoospoTracker connects to your CooSpo chest or arm heart rate monitor via Bluetooth Low Energy to track live BPM and R-R intervals.</string>
+	<string>FIGHT connects to your Bluetooth heart rate monitor (chest strap, armband or watch in broadcast mode) to track live heart rate and beat-to-beat intervals.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
-	<string>CoospoTracker connects to your CooSpo heart rate strap via Bluetooth.</string>
+	<string>FIGHT connects to your Bluetooth heart rate monitor.</string>
 	<key>NSHealthShareUsageDescription</key>
-	<string>CoospoTracker checks which workouts it has already saved to Apple Health.</string>
+	<string>FIGHT checks which workouts it has already saved to Apple Health.</string>
 	<key>NSHealthUpdateUsageDescription</key>
-	<string>CoospoTracker saves your finished workouts, heart rate and active calories to Apple Health.</string>
+	<string>FIGHT saves your finished workouts, heart rate and active calories to Apple Health.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

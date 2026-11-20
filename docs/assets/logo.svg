@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="FIGHT logo">
+  <defs>
+    <radialGradient id="bg" cx="55%" cy="35%" r="80%">
+      <stop offset="0" stop-color="#2b1115"/>
+      <stop offset="0.6" stop-color="#120a0c"/>
+      <stop offset="1" stop-color="#070708"/>
+    </radialGradient>
+    <linearGradient id="glove" x1="0.1" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#ff6a52"/>
+      <stop offset="0.5" stop-color="#e5162c"/>
+      <stop offset="1" stop-color="#a00a1d"/>
+    </linearGradient>
+    <linearGradient id="thumb" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ff7d66"/>
+      <stop offset="1" stop-color="#e01a2f"/>
+    </linearGradient>
+    <linearGradient id="cuff" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#7d0716"/>
+      <stop offset="1" stop-color="#b30d22"/>
+    </linearGradient>
+    <filter id="glow" x="-10%" y="-30%" width="120%" height="160%">
+      <feGaussianBlur stdDeviation="9" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="22" flood-color="#000" flood-opacity="0.55"/>
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+
+  <g transform="translate(28 34) rotate(-28 540 500)" filter="url(#shadow)">
+    <!-- cuff / wrist -->
+    <rect x="196" y="410" width="250" height="236" rx="46" fill="url(#cuff)"/>
+    <!-- fist -->
+    <path d="M410 330
+             C470 240 650 222 770 262
+             C880 300 902 420 880 505
+             C858 595 772 650 655 650
+             L470 650
+             C410 650 372 610 372 548
+             L372 420
+             C372 385 388 355 410 330 Z"
+          fill="url(#glove)"/>
+    <!-- thumb wrapping the front -->
+    <path d="M478 400
+             C540 312 716 296 808 350
+             C852 376 848 438 798 444
+             C722 452 616 440 548 462
+             C500 478 452 440 478 400 Z"
+          fill="url(#thumb)" stroke="#9a0a1b" stroke-width="10" stroke-linejoin="round"/>
+    <!-- highlight -->
+    <path d="M520 300 C600 262 700 260 760 284 C690 282 600 296 540 330 Z" fill="#ffffff" opacity="0.35"/>
+    <!-- knuckle seam -->
+    <path d="M560 560 C650 585 760 570 840 520" fill="none" stroke="#8a0819" stroke-width="10" stroke-linecap="round" opacity="0.55"/>
+  </g>
+
+  <!-- heartbeat line: the glove's cuff stripe becomes the pulse -->
+  <path d="M120 735 L360 735 L404 668 L460 830 L520 610 L566 760 L598 735 L904 735"
+        fill="none" stroke="#ffffff" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)"/>
+</svg>
