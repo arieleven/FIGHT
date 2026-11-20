@@ -8,9 +8,10 @@ targets:
     type: application
     platform: iOS
     sources:
-      - path: Sources
+      - path: Sources/App
+      - path: Sources/Shared
     info:
-      path: Sources/Info.plist
+      path: Sources/App/Info.plist
       properties:
         CFBundleDisplayName: Coospo Workout
         UILaunchScreen: {}
@@ -20,9 +21,34 @@ targets:
         NSBluetoothPeripheralUsageDescription: "Connects to your Coospo HW9 heart rate monitor during workouts."
         UIBackgroundModes:
           - bluetooth-central
+        NSSupportsLiveActivities: true
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+    dependencies:
+      - target: CoospoWidgetExtension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.coospotracker.app
         SWIFT_VERSION: "5.9"
         CODE_SIGN_STYLE: Manual
         CODE_SIGNING_ALLOWED: NO
+
+  CoospoWidgetExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/Widget
+      - path: Sources/Shared
+    info:
+      path: Sources/Widget/Info.plist
+      properties:
+        CFBundleDisplayName: Coospo Live Round
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.coospotracker.app.WidgetExtension
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: NO
+        SKIP_INSTALL: YES

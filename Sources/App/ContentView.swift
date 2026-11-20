@@ -29,9 +29,11 @@ struct ContentView: View {
         .onChange(of: workoutStore.isWorkoutActive) { _, active in
             UIApplication.shared.isIdleTimerDisabled = active || workoutStore.isMeasuringHRR
         }
+        .sheet(item: $workoutStore.pendingTagWorkout) { workout in
+            PostSessionTagSheet(workout: workout)
+        }
     }
 
-    // MARK: - Tab 1: Train
     private var trainTab: some View {
         NavigationStack {
             ScrollView {
@@ -305,7 +307,7 @@ struct ContentView: View {
 
     private var savedWorkoutsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("WORKOUT LOG (TAP FOR GRAPH & HIGHLIGHTS)")
+            Text("WORKOUT LOG (TAP FOR GRAPH & ROUND DECAY)")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 
@@ -320,10 +322,10 @@ struct ContentView: View {
                             .frame(width: 30)
 
                         VStack(alignment: .leading, spacing: 3) {
-                            Text("\(item.category.rawValue) • \(item.startDate.formatted(date: .abbreviated, time: .shortened))")
+                            Text("\(item.category.rawValue) • \(item.drillTag.rawValue)")
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
-                            Text("\(formatDuration(item.duration)) • Avg \(item.averageBPM) • Max \(item.maxBPM) • \(Int(item.calories)) kcal\(item.hrr60Drop != nil ? " • HRR -\(item.hrr60Drop!)" : "")")
+                            Text("\(formatDuration(item.duration)) • Avg \(item.averageBPM) • Max \(item.maxBPM) • RPE \(item.rpe)/10\(item.hrr60Drop != nil ? " • HRR -\(item.hrr60Drop!)" : "")")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -357,5 +359,70 @@ struct ContentView: View {
         return hrs > 0
             ? String(format: "%d:%02d:%02d", hrs, mins, secs)
             : String(format: "%02d:%02d", mins, secs)
+    }
+}
+
+struct PostSessionTagSheet: View {
+    @EnvironmentObject var workoutStore: WorkoutStore
+    @Environment(\.dismiss) private var dismiss
+
+    let workout: SavedWorkout
+    @State private var selectedTag: DrillTag = .heavyBagPower
+    @State private var rpeValue: Double = 7.0
+    @State private var notes: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Drill / Sparring Type") {
+                    Picker("Focus", selection: $selectedTag) {
+                        ForEach(DrillTag.allCases) { tag in
+                            Text(tag.rawValue).tag(tag)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                }
+
+                Section("Perceived Exertion (RPE \(Int(rpeValue))/10)") {
+                    Slider(value: $rpeValue, in: 1...10, step: 1)
+                    Text(rpeDescription(Int(rpeValue)))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Corner / Technique Notes") {
+                    TextField("e.g., 5 rounds southpaw sparring, gassed in R4...", text: $notes)
+                }
+            }
+            .navigationTitle("Tag Session")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save Tag") {
+                        workoutStore.updateWorkoutTagging(
+                            workoutID: workout.id,
+                            drillTag: selectedTag,
+                            rpe: Int(rpeValue),
+                            notes: notes
+                        )
+                        dismiss()
+                    }
+                }
+            }
+            .onAppear {
+                selectedTag = workout.drillTag
+                rpeValue = Double(workout.rpe)
+                notes = workout.notes
+            }
+        }
+    }
+
+    private func rpeDescription(_ rpe: Int) -> String {
+        switch rpe {
+        case 1...3: return "Light technical flow — minimal breathlessness"
+        case 4...6: return "Moderate camp pace — controlled breathing"
+        case 7...8: return "Hard sparring / heavy bag — strong anaerobic burn"
+        default: return "9–10 All-out fight war — maximal redline effort"
+        }
     }
 }

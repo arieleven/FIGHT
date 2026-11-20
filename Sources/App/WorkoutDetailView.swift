@@ -6,10 +6,18 @@ struct WorkoutDetailView: View {
     let workout: SavedWorkout
 
     @State private var selectedElapsed: Double?
+    @State private var loadedSamples: [HeartRatePoint] = []
+    @State private var showingComparison = false
+
+    private var chartSamples: [HeartRatePoint] {
+        guard loadedSamples.count > 360 else { return loadedSamples }
+        let strideStep = max(1, loadedSamples.count / 360)
+        return stride(from: 0, to: loadedSamples.count, by: strideStep).map { loadedSamples[$0] }
+    }
 
     private var selectedSample: HeartRatePoint? {
         guard let target = selectedElapsed else { return nil }
-        return workout.samples.min(by: { abs($0.elapsedSeconds - target) < abs($1.elapsedSeconds - target) })
+        return chartSamples.min(by: { abs($0.elapsedSeconds - target) < abs($1.elapsedSeconds - target) })
     }
 
     var body: some View {
@@ -17,6 +25,9 @@ struct WorkoutDetailView: View {
             VStack(spacing: 20) {
                 headerSummaryCard
                 interactiveChartCard
+                if workout.roundStats.count >= 2 {
+                    roundDecayChartCard
+                }
                 if !workout.pointsOfInterest.isEmpty {
                     poiSection
                 }
@@ -28,11 +39,23 @@ struct WorkoutDetailView: View {
         .navigationTitle(workout.category.rawValue)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showingComparison = true
+                } label: {
+                    Image(systemName: "square.stack.3d.up")
+                }
+
                 ShareLink(item: workoutStore.exportTCXFile(for: workout)) {
-                    Label("Export TCX", systemImage: "square.and.arrow.up")
+                    Image(systemName: "square.and.arrow.up")
                 }
             }
+        }
+        .sheet(isPresented: $showingComparison) {
+            ComparisonView(initialBaselineWorkout: workout)
+        }
+        .onAppear {
+            loadedSamples = workoutStore.resolvedSamples(for: workout)
         }
     }
 
@@ -42,17 +65,32 @@ struct WorkoutDetailView: View {
                 Image(systemName: workout.category.icon)
                     .font(.title2)
                     .foregroundStyle(.green)
-                VStack(alignment: .leading) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(workout.startDate.formatted(date: .complete, time: .shortened))
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if workout.roundPreset != .open {
-                        Text("Format: \(workout.roundPreset.rawValue)")
-                            .font(.caption.weight(.semibold))
+                    HStack(spacing: 8) {
+                        Text("\(workout.drillTag.rawValue) • RPE \(workout.rpe)/10")
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
+                        if workout.isCompressedArchive {
+                            Text("CSPK ARCHIVED")
+                                .font(.system(size: 9, weight: .heavy))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.purple.opacity(0.25), in: Capsule())
+                                .foregroundStyle(.purple)
+                        }
                     }
                 }
                 Spacer()
+            }
+
+            if !workout.notes.isEmpty {
+                Text("\"\(workout.notes)\"")
+                    .font(.caption)
+                    .italic()
+                    .foregroundStyle(.secondary)
             }
 
             Divider()
@@ -81,7 +119,7 @@ struct WorkoutDetailView: View {
         }
     }
 
-    // MARK: - Interactive HR Graph with Points of Interest
+    // MARK: - Interactive HR Curve + Points of Interest
     private var interactiveChartCard: some View {
         let zones = workoutStore.activeProfile.activeZones
 
@@ -97,15 +135,14 @@ struct WorkoutDetailView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(z.color)
                 } else {
-                    Text("Drag finger on graph to inspect")
+                    Text("Drag finger on graph")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            if workout.samples.count >= 2 {
+            if chartSamples.count >= 2 {
                 Chart {
-                    // Threshold reference lines
                     RuleMark(y: .value("Z2 Ceiling", zones.z2Max))
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         .foregroundStyle(.green.opacity(0.45))
@@ -114,7 +151,7 @@ struct WorkoutDetailView: View {
                         .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
                         .foregroundStyle(.orange.opacity(0.55))
 
-                    ForEach(workout.samples) { pt in
+                    ForEach(chartSamples) { pt in
                         AreaMark(
                             x: .value("Time (s)", pt.elapsedSeconds),
                             y: .value("BPM", pt.bpm)
@@ -135,7 +172,6 @@ struct WorkoutDetailView: View {
                         .foregroundStyle(.red)
                     }
 
-                    // Highlighted Points of Interest pins
                     ForEach(workout.pointsOfInterest) { poi in
                         PointMark(
                             x: .value("Time (s)", poi.elapsedSeconds),
@@ -163,7 +199,7 @@ struct WorkoutDetailView: View {
                         .foregroundStyle(.white)
                     }
                 }
-                .chartYScale(domain: max(45, workout.minBPM - 10)...min(220, workout.maxBPM + 12))
+                .chartYScale(domain: max(45, workout.minBPM - 10)...min(230, workout.maxBPM + 12))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 5)) { value in
                         AxisGridLine()
@@ -187,7 +223,54 @@ struct WorkoutDetailView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Points of Interest List
+    // MARK: - Round-by-Round Fatigue Decay Chart
+    private var roundDecayChartCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("ROUND-BY-ROUND FATIGUE DECAY")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+
+            Chart {
+                ForEach(workout.roundStats) { stat in
+                    LineMark(
+                        x: .value("Round", "R\(stat.roundNumber)"),
+                        y: .value("BPM", stat.peakBPM)
+                    )
+                    .foregroundStyle(by: .value("Metric", "Peak BPM"))
+                    .symbol(Circle())
+
+                    LineMark(
+                        x: .value("Round", "R\(stat.roundNumber)"),
+                        y: .value("BPM", stat.avgBPM)
+                    )
+                    .foregroundStyle(by: .value("Metric", "Avg BPM"))
+                    .symbol(Square())
+
+                    if let drop = stat.stoolDropBPM {
+                        BarMark(
+                            x: .value("Round", "R\(stat.roundNumber)"),
+                            y: .value("Stool Drop", drop)
+                        )
+                        .foregroundStyle(Color.cyan.opacity(0.35))
+                    }
+                }
+            }
+            .chartForegroundStyleScale([
+                "Peak BPM": Color.red,
+                "Avg BPM": Color.orange
+            ])
+            .frame(height: 190)
+
+            HStack(spacing: 12) {
+                Label("Cyan bars = 60s Stool HR Drop per round", systemImage: "arrow.down.heart.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.cyan)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
     private var poiSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("POINTS OF INTEREST")
@@ -215,7 +298,6 @@ struct WorkoutDetailView: View {
         }
     }
 
-    // MARK: - Zone Time Distribution
     private var zoneBreakdownCard: some View {
         let total = max(1.0, workout.zoneSeconds.values.reduce(0, +))
         let zoneMeta: [(Int, String, Color)] = [
@@ -259,7 +341,6 @@ struct WorkoutDetailView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Advanced Fight Conditioning Metrics
     private var advancedMetricsGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("CONDITIONING & RECOVERY METRICS")

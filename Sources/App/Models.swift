@@ -60,6 +60,14 @@ struct ZoneBoundary: Codable, Equatable {
     var z2Max: Int
     var z3Max: Int
     var z4Max: Int
+
+    mutating func clamp(maxHR: Int) {
+        let ceiling = max(130, maxHR)
+        z1Max = min(max(80, z1Max), ceiling - 25)
+        z2Max = min(max(z1Max + 5, z2Max), ceiling - 18)
+        z3Max = min(max(z2Max + 5, z3Max), ceiling - 12)
+        z4Max = min(max(z3Max + 5, z4Max), ceiling - 5)
+    }
 }
 
 struct AthleteProfile: Identifiable, Codable, Equatable {
@@ -98,12 +106,25 @@ struct AthleteProfile: Identifiable, Codable, Equatable {
         )
     }
 
+    mutating func sanitize() {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { name = "Fighter" }
+        age = min(max(13, age), 85)
+        weightKg = min(max(35.0, weightKg.isFinite ? weightKg : 75.0), 200.0)
+        targetFightWeightKg = min(max(35.0, targetFightWeightKg.isFinite ? targetFightWeightKg : 75.0), 200.0)
+        heightCm = min(max(120.0, heightCm.isFinite ? heightCm : 175.0), 240.0)
+        restingHR = min(max(30, restingHR), 110)
+        maxHR = min(max(restingHR + 35, maxHR), 230)
+        lactateThresholdHR = min(max(restingHR + 25, lactateThresholdHR), effectiveMaxHR - 3)
+        baselineRMSSD = min(max(10.0, baselineRMSSD.isFinite ? baselineRMSSD : 50.0), 250.0)
+        manualZones.clamp(maxHR: effectiveMaxHR)
+    }
+
     var effectiveMaxHR: Int {
         if useAutoMaxHR {
-            // Tanaka formula: 208 - (0.7 * age)
             return Int(round(208.0 - (0.7 * Double(age))))
         }
-        return max(120, maxHR)
+        return min(max(130, maxHR), 230)
     }
 
     var activeZones: ZoneBoundary {
@@ -134,11 +155,12 @@ struct AthleteProfile: Identifiable, Codable, Equatable {
                 z4Max: Int(round(lt * 1.00))
             )
         case .manual:
-            return manualZones
+            var copy = manualZones
+            copy.clamp(maxHR: effectiveMaxHR)
+            return copy
         }
     }
 
-    /// Mifflin-St Jeor BMR * 1.55 moderate training baseline + camp adjustment
     var dailyCalorieTarget: Int {
         let s: Double = (sex == .male) ? 5.0 : -161.0
         let bmr = (10.0 * weightKg) + (6.25 * heightCm) - (5.0 * Double(age)) + s
@@ -209,6 +231,55 @@ enum WorkoutCategory: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum DrillTag: String, CaseIterable, Identifiable, Codable {
+    case untagged = "General Session"
+    case technicalSparring = "Technical Sparring"
+    case hardSparring = "Hard Sparring"
+    case clinchGrappling = "Clinch / Grappling"
+    case heavyBagPower = "Heavy Bag Power"
+    case padWork = "Pad Work / Dutch Drills"
+    case roadwork = "Roadwork / Conditioning"
+
+    var id: String { rawValue }
+}
+
+enum HydrationStatus: Int, CaseIterable, Identifiable, Codable {
+    case optimal = 1
+    case slight = 2
+    case dehydrated = 3
+    case severeCut = 4
+
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .optimal: return "1 • Pale / Hydrated"
+        case .slight: return "2 • Light Yellow / Normal"
+        case .dehydrated: return "3 • Dark Yellow / Depleted"
+        case .severeCut: return "4 • Amber / Heavy Cut"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .optimal: return .green
+        case .slight: return .yellow
+        case .dehydrated: return .orange
+        case .severeCut: return .red
+        }
+    }
+}
+
+struct WeighInEntry: Identifiable, Codable {
+    var id: UUID = UUID()
+    let athleteID: UUID
+    let date: Date
+    let fastedWeightKg: Double
+    let hydration: HydrationStatus
+    let morningRestingHR: Int
+    let morningRMSSD: Double?
+}
+
 enum RoundPreset: String, CaseIterable, Identifiable, Codable {
     case open = "Open Session"
     case kickboxing3x1 = "3m × 1m Rounds"
@@ -247,6 +318,14 @@ struct HeartRatePoint: Codable, Identifiable {
     let rrIntervalMs: Double?
 }
 
+struct RoundStat: Identifiable, Codable {
+    var id: Int { roundNumber }
+    let roundNumber: Int
+    let avgBPM: Int
+    let peakBPM: Int
+    let stoolDropBPM: Int?
+}
+
 struct WorkoutPOI: Identifiable, Codable {
     var id: UUID = UUID()
     let title: String
@@ -262,6 +341,9 @@ struct SavedWorkout: Identifiable, Codable {
     let athleteID: UUID
     let category: WorkoutCategory
     let roundPreset: RoundPreset
+    var drillTag: DrillTag
+    var rpe: Int
+    var notes: String
     let startDate: Date
     let duration: TimeInterval
     let averageBPM: Int
@@ -275,8 +357,11 @@ struct SavedWorkout: Identifiable, Codable {
     let rmssdMs: Double?
     let cardiacDriftPercent: Double
     let zoneSeconds: [Int: Double]
-    let samples: [HeartRatePoint]
+    let roundStats: [RoundStat]
     let pointsOfInterest: [WorkoutPOI]
+    let sampleCount: Int
+    var isCompressedArchive: Bool
+    var samples: [HeartRatePoint]
 }
 
 struct CoachPrescription: Identifiable {
@@ -299,6 +384,7 @@ struct FighterAnalytics {
     let recommendedSleepHours: Double
     let latestHRV: Double?
     let latestHRR60: Int?
+    let dehydrationWarning: String?
     let trendLabel: String
     let prescriptions: [CoachPrescription]
 }

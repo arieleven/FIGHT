@@ -25,7 +25,6 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     @Published var latestRRMs: Double? = nil
     @Published var rollingRMSSD: Double? = nil
 
-    // 60-second Morning / Pre-Training HRV Check
     @Published var isHRVScanning = false
     @Published var hrvScanSecondsLeft: Int = 60
     @Published var lastMorningHRV: Double? = nil
@@ -73,7 +72,9 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         deviceName = peripheral.name ?? "Coospo HW9"
         connectionState = .connecting
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: savedDeviceKey)
-        centralManager.connect(peripheral, options: nil)
+        if centralManager.state == .poweredOn {
+            centralManager.connect(peripheral, options: nil)
+        }
     }
 
     func disconnect() {
@@ -116,7 +117,6 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         isHRVScanning = false
     }
 
-    /// Parses Bluetooth SIG 0x2A37 Heart Rate Measurement + optional RR-Intervals (1/1024s units)
     private func parseHeartRatePacket(from data: Data) -> (bpm: Int, rrIntervalsMs: [Double])? {
         let bytes = [UInt8](data)
         guard !bytes.isEmpty else { return nil }
@@ -164,7 +164,6 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         var count = 0
         for i in 1..<rrIntervals.count {
             let diff = rrIntervals[i] - rrIntervals[i - 1]
-            // Filter ectopic/motion artifact spikes > 250ms jump
             if abs(diff) < 250.0 {
                 sumSquaredDiffs += diff * diff
                 count += 1
@@ -180,9 +179,12 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
         MainActor.assumeIsolated {
             switch central.state {
             case .poweredOn:
-                if let savedIDString = UserDefaults.standard.string(forKey: savedDeviceKey),
-                   let uuid = UUID(uuidString: savedIDString),
-                   let knownPeripheral = central.retrievePeripherals(withIdentifiers: [uuid]).first {
+                if shouldAutoReconnect, let existing = connectedPeripheral {
+                    connectionState = .reconnecting
+                    central.connect(existing, options: nil)
+                } else if let savedIDString = UserDefaults.standard.string(forKey: savedDeviceKey),
+                          let uuid = UUID(uuidString: savedIDString),
+                          let knownPeripheral = central.retrievePeripherals(withIdentifiers: [uuid]).first {
                     connect(to: knownPeripheral)
                 } else {
                     startScanning()
@@ -225,9 +227,11 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
     ) {
         MainActor.assumeIsolated {
             currentBPM = 0
-            if shouldAutoReconnect {
+            if shouldAutoReconnect && central.state == .poweredOn {
                 connectionState = .reconnecting
                 centralManager.connect(peripheral, options: nil)
+            } else if shouldAutoReconnect {
+                connectionState = .bluetoothOff
             } else {
                 connectionState = .disconnected
             }
@@ -275,7 +279,8 @@ extension BLEHeartRateManager: CBPeripheralDelegate {
             guard let data = characteristic.value else { return }
 
             if characteristic.uuid == heartRateMeasurementUUID,
-               let parsed = parseHeartRatePacket(from: data), parsed.bpm > 0 {
+               let parsed = parseHeartRatePacket(from: data),
+               parsed.bpm >= 30 && parsed.bpm <= 240 {
                 currentBPM = parsed.bpm
 
                 if !parsed.rrIntervalsMs.isEmpty {

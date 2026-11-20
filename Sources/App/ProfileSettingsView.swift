@@ -5,13 +5,17 @@ struct ProfileSettingsView: View {
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
 
+    enum Field: Hashable {
+        case name, weight, targetWeight, height
+    }
+    @FocusState private var focusedField: Field?
+
     var body: some View {
         let profile = workoutStore.activeProfile
         let zones = profile.activeZones
 
         NavigationStack {
             Form {
-                // Multi-Person Switcher
                 Section("Active Fighter Profile") {
                     Picker("Fighter", selection: $workoutStore.activeProfileID) {
                         ForEach(workoutStore.profiles) { p in
@@ -35,13 +39,13 @@ struct ProfileSettingsView: View {
                     }
                 }
 
-                // Biometrics
-                Section("Biometrics & Physiology") {
+                Section("Biometrics & Physiology (Clamped Safe Bounds)") {
                     HStack {
                         Text("Name")
                         Spacer()
                         TextField("Name", text: binding(for: \.name))
                             .multilineTextAlignment(.trailing)
+                            .focused($focusedField, equals: .name)
                     }
 
                     Picker("Sex", selection: binding(for: \.sex)) {
@@ -50,36 +54,37 @@ struct ProfileSettingsView: View {
                         }
                     }
 
-                    Stepper("Age: \(profile.age) yrs", value: binding(for: \.age), in: 14...80)
+                    Stepper("Age: \(profile.age) yrs", value: binding(for: \.age), in: 13...85)
 
                     HStack {
-                        Text("Current Weight (kg)")
+                        Text("Current Weight (35–200 kg)")
                         Spacer()
                         TextField("kg", value: binding(for: \.weightKg), format: .number)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
+                            .focused($focusedField, equals: .weight)
                     }
 
                     HStack {
-                        Text("Height (cm)")
+                        Text("Height (120–240 cm)")
                         Spacer()
                         TextField("cm", value: binding(for: \.heightCm), format: .number)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
+                            .focused($focusedField, equals: .height)
                     }
 
-                    Stepper("Resting HR: \(profile.restingHR) BPM", value: binding(for: \.restingHR), in: 35...100)
+                    Stepper("Resting HR: \(profile.restingHR) BPM", value: binding(for: \.restingHR), in: 30...110)
 
                     Toggle("Auto Max HR (Tanaka: \(Int(round(208.0 - 0.7 * Double(profile.age)))))", isOn: binding(for: \.useAutoMaxHR))
 
                     if !profile.useAutoMaxHR {
-                        Stepper("Custom Max HR: \(profile.maxHR) BPM", value: binding(for: \.maxHR), in: 140...225)
+                        Stepper("Custom Max HR: \(profile.maxHR) BPM", value: binding(for: \.maxHR), in: (profile.restingHR + 35)...230)
                     }
                 }
 
-                // Fight Cut & Weight Goals
                 Section("Fight Camp & Weight Goal") {
                     Picker("Camp Phase", selection: binding(for: \.campPhase)) {
                         ForEach(CampPhase.allCases) { phase in
@@ -94,6 +99,7 @@ struct ProfileSettingsView: View {
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
+                            .focused($focusedField, equals: .targetWeight)
                     }
 
                     HStack {
@@ -118,7 +124,6 @@ struct ProfileSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                // Heart Rate Zone Calculation Method & Custom Editor
                 Section("Heart Rate Zone Calculation") {
                     Picker("Formula", selection: binding(for: \.zoneMethod)) {
                         ForEach(ZoneCalculationMethod.allCases) { method in
@@ -131,17 +136,16 @@ struct ProfileSettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if profile.zoneMethod == .lactateThreshold {
-                        Stepper("Lactate Threshold (LTHR): \(profile.lactateThresholdHR) BPM", value: binding(for: \.lactateThresholdHR), in: 120...205)
+                        Stepper("Lactate Threshold (LTHR): \(profile.lactateThresholdHR) BPM", value: binding(for: \.lactateThresholdHR), in: (profile.restingHR + 25)...(profile.effectiveMaxHR - 3))
                     }
 
                     if profile.zoneMethod == .manual {
-                        Stepper("Z1 Ceiling: \(profile.manualZones.z1Max) BPM", value: binding(for: \.manualZones.z1Max), in: 90...160)
-                        Stepper("Z2 Ceiling: \(profile.manualZones.z2Max) BPM", value: binding(for: \.manualZones.z2Max), in: 105...175)
-                        Stepper("Z3 Ceiling: \(profile.manualZones.z3Max) BPM", value: binding(for: \.manualZones.z3Max), in: 120...190)
-                        Stepper("Z4 Ceiling: \(profile.manualZones.z4Max) BPM", value: binding(for: \.manualZones.z4Max), in: 135...205)
+                        Stepper("Z1 Ceiling: \(zones.z1Max) BPM", value: binding(for: \.manualZones.z1Max), in: 80...(zones.z2Max - 5))
+                        Stepper("Z2 Ceiling: \(zones.z2Max) BPM", value: binding(for: \.manualZones.z2Max), in: (zones.z1Max + 5)...(zones.z3Max - 5))
+                        Stepper("Z3 Ceiling: \(zones.z3Max) BPM", value: binding(for: \.manualZones.z3Max), in: (zones.z2Max + 5)...(zones.z4Max - 5))
+                        Stepper("Z4 Ceiling: \(zones.z4Max) BPM", value: binding(for: \.manualZones.z4Max), in: (zones.z3Max + 5)...(profile.effectiveMaxHR - 5))
                     }
 
-                    // Active Zone Preview
                     VStack(alignment: .leading, spacing: 8) {
                         zoneRow(label: "Zone 1 • Recovery", range: "< \(zones.z1Max) BPM", color: .blue)
                         zoneRow(label: "Zone 2 • Aerobic Base", range: "\(zones.z1Max + 1)–\(zones.z2Max) BPM", color: .green)
@@ -151,8 +155,42 @@ struct ProfileSettingsView: View {
                     }
                     .padding(.vertical, 4)
                 }
+
+                Section("iPhone Files App & Lossless Archive (.cspk)") {
+                    HStack {
+                        Text("Files App Folder")
+                        Spacer()
+                        Text("On My iPhone / Coospo Workout")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Compressed (>7 Days Old)")
+                        Spacer()
+                        Text("\(workoutStore.compressedArchiveCount) workouts")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.purple)
+                    }
+                    HStack {
+                        Text("Total Disk Footprint")
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: workoutStore.savedStorageBytes, countStyle: .file))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    Button("Run Lossless Archive Check Now") {
+                        workoutStore.runLosslessAutoCompression()
+                    }
+                }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Fighter & Zones")
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { focusedField = nil }
+                }
+            }
             .alert("New Fighter Profile", isPresented: $showingNewProfileAlert) {
                 TextField("Fighter Name", text: $newFighterName)
                 Button("Create") {
@@ -178,6 +216,7 @@ struct ProfileSettingsView: View {
             set: { newValue in
                 var updated = workoutStore.activeProfile
                 updated[keyPath: keyPath] = newValue
+                updated.sanitize()
                 workoutStore.activeProfile = updated
             }
         )
