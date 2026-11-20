@@ -27,24 +27,27 @@ struct CampView: View {
                     fightHeader(profile: profile, plan: plan)
 
                     if let plan, let week = plan.currentWeek {
-                        currentWeekCard(week, plan: plan, profile: profile)
+                        currentWeekCard(week, plan: plan, profile: profile, detailed: false)
                     }
 
                     if let days = weight.daysToFight, (0...3).contains(days) {
                         rehydrationCard(weight, profile: profile)
                     }
 
-                    weightCard(weight, profile: profile)
+                    weightCard(weight, profile: profile, detailed: false)
 
-                    bodySignalsCard
-
-                    if let plan {
-                        planCard(plan)
+                    AdvancedSection("Camp details", subtitle: "Weight trend, body signals, full plan, reminders, report", key: "camp.details") {
+                        if let plan, let week = plan.currentWeek {
+                            currentWeekCard(week, plan: plan, profile: profile, detailed: true)
+                        }
+                        weightCard(weight, profile: profile, detailed: true)
+                        bodySignalsCard
+                        if let plan {
+                            planCard(plan)
+                        }
+                        reminderCard
+                        reportCard
                     }
-
-                    reminderCard
-
-                    reportCard
                 }
                 .padding()
             }
@@ -151,9 +154,10 @@ struct CampView: View {
 
     // MARK: Current week
 
-    private func currentWeekCard(_ week: CampWeek, plan: CampPlan, profile: AthleteProfile) -> some View {
+    private func currentWeekCard(_ week: CampWeek, plan: CampPlan, profile: AthleteProfile, detailed: Bool) -> some View {
         let wantedPhase: CampPhase = week.isFightWeek ? .fightWeek : week.phase.profilePhase
         return VStack(alignment: .leading, spacing: 12) {
+            if !detailed {
             HStack {
                 Text("THIS WEEK")
                     .font(.caption.weight(.bold))
@@ -187,6 +191,8 @@ struct CampView: View {
                     .foregroundStyle(.secondary)
             }
             .accessibilityElement(children: .combine)
+            } else {
+            Text("This week's sessions").font(.headline)
 
             Text("Intensity mix: \(week.intensityMix.low)% easy • \(week.intensityMix.mid)% tempo • \(week.intensityMix.high)% hard")
                 .font(.caption)
@@ -212,6 +218,7 @@ struct CampView: View {
                 .buttonStyle(.bordered)
                 .controlSize(.small)
             }
+            }
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
@@ -227,20 +234,24 @@ struct CampView: View {
 
     // MARK: Weight
 
-    private func weightCard(_ w: WeightCutStatus, profile: AthleteProfile) -> some View {
+    private func weightCard(_ w: WeightCutStatus, profile: AthleteProfile, detailed: Bool) -> some View {
         let recent = w.series.filter { $0.date >= Date().addingTimeInterval(-56 * 86400) }
         let imp = profile.useImperial
         let u = WeightUnits.unit(imp)
+        let shownWarnings = detailed ? Array(w.warnings.dropFirst()) : Array(w.warnings.prefix(1))
         return VStack(alignment: .leading, spacing: 12) {
+            if !detailed {
             HStack {
-                Text("Weight Cut").font(.headline)
+                Text("Weight").font(.headline)
                 Spacer()
                 Button {
                     showingWeighIn = true
                 } label: {
-                    Label("Log", systemImage: "plus.circle.fill")
+                    Label("Log Weigh-In", systemImage: "plus.circle.fill")
                         .font(.subheadline.weight(.semibold))
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
             }
 
             HStack(spacing: 12) {
@@ -255,7 +266,8 @@ struct CampView: View {
                     .font(.caption)
                     .foregroundStyle(w.isOnTrack ? Color.secondary : Color.orange)
             }
-
+            } else {
+            Text("Weight trend").font(.headline)
             if recent.count >= 2 {
                 Chart {
                     ForEach(recent) { e in
@@ -281,8 +293,9 @@ struct CampView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            }
 
-            ForEach(w.warnings) { warning in
+            ForEach(shownWarnings) { warning in
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: warning.icon)
                         .foregroundStyle(warning.tint)
@@ -301,7 +314,7 @@ struct CampView: View {
                 .accessibilityElement(children: .combine)
             }
 
-            if healthKit.isAvailable {
+            if detailed && healthKit.isAvailable {
                 Button {
                     importingHealth = true
                     Task {
@@ -321,7 +334,7 @@ struct CampView: View {
                 }
             }
 
-            if !w.series.isEmpty {
+            if detailed && !w.series.isEmpty {
                 NavigationLink {
                     WeighInHistoryView()
                 } label: {

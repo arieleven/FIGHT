@@ -363,6 +363,12 @@ struct PlanEditorView: View {
 struct BlockEditorView: View {
     @Binding var block: PlanBlock
     let stance: Stance
+    @AppStorage("fight.advanced.block") private var showAdvanced = false
+
+    /// Advanced options already in use stay visible so nothing is hidden by surprise.
+    private var usesAdvanced: Bool {
+        block.target != nil || !block.cue.isEmpty || block.videoURL != nil
+    }
 
     private static let roundOptions = [15, 20, 30, 45, 60, 90, 120, 180, 240, 300]
     private static let restOptions = [0, 10, 15, 20, 30, 40, 45, 60, 90, 120]
@@ -421,6 +427,13 @@ struct BlockEditorView: View {
             }
 
             Section {
+                Toggle("Show advanced settings", isOn: $showAdvanced)
+            } footer: {
+                Text("Heart-rate target, spoken coaching cue and technique video.")
+            }
+
+            if showAdvanced || usesAdvanced {
+            Section {
                 Toggle("Heart-rate target", isOn: Binding(
                     get: { block.target != nil },
                     set: { block.target = $0 ? (block.target ?? ZoneTarget(lowZone: 2, highZone: 3)) : nil }
@@ -452,6 +465,7 @@ struct BlockEditorView: View {
                 ))
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
+            }
             }
         }
         .navigationTitle(block.title.isEmpty ? "Block" : block.title)

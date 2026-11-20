@@ -44,24 +44,31 @@ struct WorkoutDetailView: View {
                 if !workout.blockResults.isEmpty {
                     PlanResultsCard(workoutID: workout.id)
                 }
-                CoachReviewCard(review: CoachEngine.review(
+                let review = CoachEngine.review(
                     workout: workoutStore.workouts.first(where: { $0.id == workout.id }) ?? workout,
                     profile: workoutStore.profile(for: workout),
                     history: workoutStore.workouts
-                ))
-                calorieBreakdownCard
+                )
+                CoachReviewCard(review: review, showItems: false)
                 interactiveChartCard
-                if !workout.pointsOfInterest.isEmpty {
-                    poiSection
+
+                AdvancedSection("Full analysis", subtitle: "Review breakdown, zones, rounds, calories, key moments, metrics", key: "workout.details") {
+                    if !review.items.isEmpty {
+                        CoachReviewCard(review: review, showItems: true, showTakeaways: false)
+                    }
+                    zoneBreakdownCard
+                    if workout.roundStats.count >= 2 {
+                        roundDecayChartCard
+                    }
+                    if !workout.pointsOfInterest.isEmpty {
+                        poiSection
+                    }
+                    if !workout.autoHRREvents.isEmpty {
+                        autoHRRSection
+                    }
+                    calorieBreakdownCard
+                    advancedMetricsGrid
                 }
-                if !workout.autoHRREvents.isEmpty {
-                    autoHRRSection
-                }
-                if workout.roundStats.count >= 2 {
-                    roundDecayChartCard
-                }
-                zoneBreakdownCard
-                advancedMetricsGrid
             }
             .padding()
         }

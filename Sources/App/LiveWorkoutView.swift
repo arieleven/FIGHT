@@ -13,6 +13,7 @@ struct LiveWorkoutView: View {
     @State private var showingTCXImporter = false
     @State private var showingFinishConfirm = false
     @State private var showingBagSettings = false
+    @State private var choosingPlan = false
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -51,44 +52,62 @@ struct LiveWorkoutView: View {
                             .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    setupCard(profile: profile)
+                    if session.isRecording {
+                        heroBPMCard(currentZone: currentZone, profile: profile)
 
-                    if let plan = session.queuedPlan, !session.isRecording {
-                        queuedPlanCard(plan, profile: profile)
+                        if session.isRunningPlan {
+                            PlanRunnerCard()
+                        }
+
+                        if session.bagEnabled || planBagBlockActive {
+                            BagComboCard(audio: session.audio, round: session.currentRound,
+                                         totalRounds: session.roundsLimit ?? session.totalBagRounds,
+                                         isComplete: session.bagSessionComplete)
+                        }
+
+                        if session.roundTimerEnabled {
+                            roundBellCard
+                        }
+
+                        if session.selectedCategory == .lthrTest {
+                            lthrFieldTestCard
+                        }
+
+                        controlButtons
+
+                        AdvancedSection("Live details", subtitle: "Chart, ghost pace, notes", key: "live.recording") {
+                            if let autoBanner = session.latestAutoHRRBanner {
+                                Label(autoBanner, systemImage: "arrow.down.heart.fill")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.cyan)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(10)
+                                    .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            if let a = session.liveAlpha1 {
+                                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
+                                      systemImage: "waveform.path.ecg")
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(a >= 0.75 ? .green : .orange)
+                            }
+                            liveSparklineCard(profile: profile)
+                            if session.selectedGhost != nil {
+                                ghostSimulatorCard
+                            }
+                            TextField("Corner note…", text: $session.workoutNotes)
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    } else {
+                        heroBPMCard(currentZone: currentZone, profile: profile)
+
+                        workoutSetupCard
+
+                        controlButtons
+
+                        AdvancedSection("More options", subtitle: "Drill type, ghost opponent, bag fine-tuning", key: "live.setup") {
+                            advancedSetup
+                        }
                     }
-
-                    if session.isRunningPlan && session.isRecording {
-                        PlanRunnerCard()
-                    }
-
-                    heroBPMCard(currentZone: currentZone, profile: profile)
-
-                    if session.selectedCategory == .lthrTest {
-                        lthrFieldTestCard
-                    }
-
-                    if session.isRecording && (session.bagEnabled || planBagBlockActive) {
-                        BagComboCard(audio: session.audio, round: session.currentRound,
-                                     totalRounds: session.roundsLimit ?? session.totalBagRounds,
-                                     isComplete: session.bagSessionComplete)
-                    }
-
-                    if bagAvailable && !session.isRecording && session.queuedPlan == nil {
-                        bagSetupCard
-                    }
-
-                    if session.selectedCategory != .lthrTest && session.queuedPlan == nil
-                        && (!session.isRecording || session.roundTimerEnabled) {
-                        roundBellCard
-                    }
-
-                    if !session.isRecording || session.selectedGhost != nil {
-                        ghostSimulatorCard
-                    }
-
-                    liveSparklineCard(profile: profile)
-
-                    controlButtons
                 }
                 .padding()
             }
@@ -135,6 +154,9 @@ struct LiveWorkoutView: View {
             }
             .onChange(of: navigation.pendingPrescription) { _, _ in applyPending() }
             .onChange(of: navigation.planToRun) { _, _ in applyPlanToRun() }
+            .onChange(of: session.isRecording) { _, recording in
+                if recording { choosingPlan = false }
+            }
             .onChange(of: workoutStore.activeProfileID) { _, _ in session.syncFromProfile() }
             .onChange(of: session.requestFinishPrompt) { _, wants in
                 if wants {
@@ -320,68 +342,184 @@ struct LiveWorkoutView: View {
 
     // MARK: Setup
 
-    private func setupCard(profile: AthleteProfile) -> some View {
-        VStack(spacing: 10) {
-            HStack {
-                Label(profile.name, systemImage: "figure.boxing")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.cyan)
-                Spacer()
-                Text(session.selectedCategory.timerModeHint)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+    private enum SetupMode: String, CaseIterable, Identifiable {
+        case free = "Free"
+        case rounds = "Rounds"
+        case bag = "Bag Coach"
+        case plan = "Plan"
+        var id: String { rawValue }
+
+        var explainer: String {
+            switch self {
+            case .free: return "Just record heart rate, zones and calories."
+            case .rounds: return "Round bell and rest timer."
+            case .bag: return "A voice coach calls combos for you on the bag."
+            case .plan: return "Follow a step-by-step session from you or your coach."
             }
-            if !session.isRecording {
-                if session.queuedPlan == nil {
-                    Menu {
-                        let mine = workoutStore.plans
-                        if !mine.isEmpty {
-                            Section("My Plans") {
-                                ForEach(mine) { p in
-                                    Button(p.title) { session.queue(p) }
-                                }
-                            }
-                        }
-                        Section("Templates") {
-                            ForEach(PlanTemplates.all) { p in
-                                Button(p.title) { session.queue(p) }
-                            }
-                        }
-                    } label: {
-                        Label("Load a Training Plan", systemImage: "list.bullet.rectangle.portrait")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var setupMode: SetupMode {
+        if session.queuedPlan != nil || choosingPlan { return .plan }
+        if session.bagEnabled { return .bag }
+        if session.roundTimerEnabled { return .rounds }
+        return .free
+    }
+
+    private var setupModeBinding: Binding<SetupMode> {
+        Binding(get: { setupMode }, set: { mode in
+            choosingPlan = mode == .plan
+            if mode != .plan { session.unqueuePlan() }
+            switch mode {
+            case .free:
+                session.bagEnabled = false
+                session.roundTimerEnabled = false
+            case .rounds:
+                session.bagEnabled = false
+                session.roundTimerEnabled = true
+            case .bag:
+                if !bagAvailable { session.selectedCategory = .heavyBag }
+                session.bagEnabled = true
+            case .plan:
+                session.bagEnabled = false
+            }
+        })
+    }
+
+    private var workoutSetupCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Text("Your workout")
+                    .font(.headline)
+                Spacer()
+                Picker("Workout type", selection: $session.selectedCategory) {
+                    ForEach(WorkoutCategory.allCases) { cat in
+                        Label(cat.rawValue, systemImage: cat.icon).tag(cat)
                     }
                 }
-                HStack {
-                    Picker("Discipline", selection: $session.selectedCategory) {
-                        ForEach(WorkoutCategory.allCases) { cat in
-                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    Spacer()
-                    Picker("Drill Tag", selection: $session.selectedDrillTag) {
-                        ForEach(DrillTag.allCases) { tag in
-                            Text(tag.rawValue).tag(tag)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
+                .pickerStyle(.menu)
+                .disabled(session.queuedPlan != nil)
+            }
+
+            if session.selectedCategory == .lthrTest {
+                Text("30-minute threshold test: a 10-minute warm-up, then 20 minutes as hard as you can sustain. Your zones update automatically at the end.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             } else {
-                HStack {
-                    Label(session.selectedCategory.rawValue, systemImage: session.selectedCategory.icon)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.orange)
-                    Spacer()
-                    Text(session.selectedDrillTag.rawValue)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                Picker("Mode", selection: setupModeBinding) {
+                    ForEach(SetupMode.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+
+                Text(setupMode.explainer)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                switch setupMode {
+                case .free:
+                    EmptyView()
+                case .rounds:
+                    roundEssentials
+                case .bag:
+                    bagEssentials
+                case .plan:
+                    planEssentials
                 }
             }
         }
-        .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+        .card()
+    }
+
+    private var roundEssentials: some View {
+        HStack {
+            Picker("Round", selection: $session.workDurationSeconds) {
+                ForEach([30, 60, 90, 120, 180, 240, 300], id: \.self) { s in
+                    Text("\(formatDuration(TimeInterval(s))) rounds").tag(s)
+                }
+            }
+            .pickerStyle(.menu)
+            Spacer()
+            Picker("Rest", selection: $session.restDurationSeconds) {
+                ForEach([15, 30, 45, 60, 90, 120], id: \.self) { s in
+                    Text("\(formatDuration(TimeInterval(s))) rest").tag(s)
+                }
+            }
+            .pickerStyle(.menu)
+        }
+    }
+
+    private var bagEssentials: some View {
+        let prefs = session.bagPrefs
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                presetButton("Steady 30", minutes: 30, work: 180, rest: 60, tempo: .steady)
+                presetButton("Fight Pace 15", minutes: 15, work: 180, rest: 60, tempo: .fightPace)
+                presetButton("Burnout 10", minutes: 10, work: 60, rest: 30, tempo: .burnout)
+            }
+            Text("\(prefs.totalMinutes) min • \(prefs.estimatedTotalRounds) rounds • \(prefs.tempo.displayName) • \(prefs.stance.rawValue)")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.orange)
+            BagPreparationStatus(audio: session.audio, compact: true)
+        }
+    }
+
+    @ViewBuilder
+    private var planEssentials: some View {
+        if let plan = session.queuedPlan {
+            queuedPlanCard(plan, profile: workoutStore.activeProfile)
+        } else {
+            Menu {
+                let mine = workoutStore.plans
+                if !mine.isEmpty {
+                    Section("My Plans") {
+                        ForEach(mine) { p in
+                            Button(p.title) { session.queue(p) }
+                        }
+                    }
+                }
+                Section("Templates") {
+                    ForEach(PlanTemplates.all) { p in
+                        Button(p.title) { session.queue(p) }
+                    }
+                }
+            } label: {
+                Label("Choose a Plan", systemImage: "list.bullet.rectangle.portrait")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 6)
+            }
+            .buttonStyle(.bordered)
+            .tint(.orange)
+        }
+    }
+
+    @ViewBuilder
+    private var advancedSetup: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Drill type", selection: $session.selectedDrillTag) {
+                ForEach(DrillTag.allCases) { tag in
+                    Text(tag.rawValue).tag(tag)
+                }
+            }
+            .pickerStyle(.menu)
+            Text("Tells the coach what this session was for, so the review can judge it fairly.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .card()
+
+        if session.bagEnabled {
+            Button {
+                showingBagSettings = true
+            } label: {
+                Label("Bag coach settings: stance, level, strikes, custom combos", systemImage: "slider.horizontal.3")
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+        }
+
+        ghostSimulatorCard
     }
 
     // MARK: Hero
@@ -429,13 +567,7 @@ struct LiveWorkoutView: View {
 
             zoneBar(bpm: bpm, profile: profile)
 
-            if session.isRecording, let a = session.liveAlpha1 {
-                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
-                      systemImage: "waveform.path.ecg")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(a >= 0.75 ? .green : .orange)
-            }
-
+            if session.isRecording {
             HStack(spacing: 12) {
                 stat("ELAPSED", formatDuration(session.elapsedSeconds), .primary)
                 Divider().frame(height: 28)
@@ -444,6 +576,7 @@ struct LiveWorkoutView: View {
                 stat("TOTAL KCAL", "\(Int(totalCalories))", .primary)
                 Divider().frame(height: 28)
                 stat("AVG / MAX", "\(session.liveAverageBPM)/\(session.liveMaxBPM)", .primary)
+            }
             }
         }
         .padding(16)
@@ -534,48 +667,6 @@ struct LiveWorkoutView: View {
     }
 
     // MARK: Bag setup
-
-    private var bagSetupCard: some View {
-        let prefs = session.bagPrefs
-        return VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: $session.bagEnabled) {
-                Label("Coached Bag Work", systemImage: "figure.boxing")
-                    .font(.subheadline.weight(.bold))
-            }
-            .tint(.orange)
-
-            if session.bagEnabled {
-                Text("\(prefs.mode.displayName) • \(prefs.tempo.displayName) • \(prefs.stance.rawValue) • \(prefs.difficulty.rawValue)\(prefs.numberCalls ? " • Numbers" : "")")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                HStack(spacing: 8) {
-                    presetButton("Steady 30", minutes: 30, work: 180, rest: 60, tempo: .steady)
-                    presetButton("Fight Pace 15", minutes: 15, work: 180, rest: 60, tempo: .fightPace)
-                    presetButton("Burnout 10", minutes: 10, work: 60, rest: 30, tempo: .burnout)
-                }
-
-                HStack {
-                    Text("\(prefs.totalMinutes) min • \(prefs.estimatedTotalRounds) rounds of \(formatDuration(TimeInterval(prefs.workSeconds))) / \(formatDuration(TimeInterval(prefs.restSeconds)))")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.orange)
-                    Spacer()
-                    Button {
-                        showingBagSettings = true
-                    } label: {
-                        Label("Settings", systemImage: "slider.horizontal.3")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-
-                BagPreparationStatus(audio: session.audio)
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
 
     private func presetButton(_ title: String, minutes: Int, work: Int, rest: Int, tempo: BagTempo) -> some View {
         let p = session.bagPrefs
@@ -777,8 +868,6 @@ struct LiveWorkoutView: View {
                         .foregroundStyle(.secondary)
                 }
             } else {
-                TextField("Corner note…", text: $session.workoutNotes)
-                    .textFieldStyle(.roundedBorder)
                 Button(role: .destructive) {
                     showingFinishConfirm = true
                 } label: {
@@ -870,6 +959,7 @@ struct BagComboCard: View {
 
 struct BagPreparationStatus: View {
     @ObservedObject var audio: AudioCoachEngine
+    var compact = false
 
     var body: some View {
         if audio.isPreparingAudio {
@@ -879,7 +969,7 @@ struct BagPreparationStatus: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
-        } else if !audio.voiceName.isEmpty {
+        } else if !audio.voiceName.isEmpty && !compact {
             Text("Voice: \(audio.voiceName). Install an Enhanced voice in Settings › Accessibility › Spoken Content for clearer calls.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)

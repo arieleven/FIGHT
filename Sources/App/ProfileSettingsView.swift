@@ -5,6 +5,7 @@ struct ProfileSettingsView: View {
     @EnvironmentObject var healthKit: HealthKitManager
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
+    @AppStorage("fight.advanced.profile") private var showAdvanced = false
 
     enum ActiveWheelPicker: Hashable {
         case age, weight, height, targetWeight, restingHR, maxHR, lthr
@@ -28,7 +29,7 @@ struct ProfileSettingsView: View {
 
         NavigationStack {
             Form {
-                Section("Active Fighter Profile") {
+                Section("Fighter") {
                     Picker("Fighter", selection: $workoutStore.activeProfileID) {
                         ForEach(workoutStore.profiles) { p in
                             Text(p.name).tag(p.id)
@@ -51,7 +52,7 @@ struct ProfileSettingsView: View {
                     }
                 }
 
-                Section("Biometrics & Physiology (Tap Row to Scroll)") {
+                Section("Your Body") {
                     Toggle("Use pounds (lb)", isOn: binding(for: \.useImperial))
                     HStack {
                         Text("Name")
@@ -135,7 +136,7 @@ struct ProfileSettingsView: View {
                     }
                 }
 
-                Section("Fight Camp & Weight Goal") {
+                Section("Weight Goal") {
                     Picker("Camp Phase", selection: binding(for: \.campPhase)) {
                         ForEach(CampPhase.allCases) { phase in
                             Text(phase.rawValue).tag(phase)
@@ -175,7 +176,46 @@ struct ProfileSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Heart Rate Zone Calculation") {
+                Section("Apple Health") {
+                    if healthKit.isAvailable {
+                        HStack {
+                            Label(healthKit.isAuthorized ? "Connected" : "Not Connected",
+                                  systemImage: healthKit.isAuthorized ? "heart.fill" : "heart.slash")
+                                .foregroundStyle(healthKit.isAuthorized ? .pink : .secondary)
+                            Spacer()
+                            if !healthKit.isAuthorized {
+                                Button("Connect") {
+                                    Task { await healthKit.requestAuthorization() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.pink)
+                                .controlSize(.small)
+                            }
+                        }
+                        Toggle("Auto-save workouts to Health", isOn: $healthKit.autoSaveEnabled)
+                            .tint(.pink)
+                        Text("Saves each finished session as a Health workout with its full heart-rate trace and active calories. Past workouts can be sent from their detail screen.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !healthKit.statusMessage.isEmpty {
+                            Text(healthKit.statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Apple Health isn't available on this device.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section {
+                    Toggle("Show advanced settings", isOn: $showAdvanced)
+                } footer: {
+                    Text("Heart-rate zone formula, voice-coaching details and storage.")
+                }
+
+                if showAdvanced {
+                Section("Heart-Rate Zones") {
                     Picker("Formula", selection: binding(for: \.zoneMethod)) {
                         ForEach(ZoneCalculationMethod.allCases) { method in
                             Text(method.rawValue).tag(method)
@@ -216,7 +256,7 @@ struct ProfileSettingsView: View {
                     .padding(.vertical, 4)
                 }
 
-                Section("AirPods Live Audio HR Coaching (Music-Safe)") {
+                Section("Voice Coaching") {
                     Toggle("Enable Voice HR Coaching", isOn: binding(for: \.audioCoach.masterEnabled))
 
                     if profile.audioCoach.masterEnabled {
@@ -248,39 +288,7 @@ struct ProfileSettingsView: View {
                     }
                 }
 
-                Section("Apple Health") {
-                    if healthKit.isAvailable {
-                        HStack {
-                            Label(healthKit.isAuthorized ? "Connected" : "Not Connected",
-                                  systemImage: healthKit.isAuthorized ? "heart.fill" : "heart.slash")
-                                .foregroundStyle(healthKit.isAuthorized ? .pink : .secondary)
-                            Spacer()
-                            if !healthKit.isAuthorized {
-                                Button("Connect") {
-                                    Task { await healthKit.requestAuthorization() }
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.pink)
-                                .controlSize(.small)
-                            }
-                        }
-                        Toggle("Auto-save workouts to Health", isOn: $healthKit.autoSaveEnabled)
-                            .tint(.pink)
-                        Text("Saves each finished session as a Health workout with its full heart-rate trace and active calories. Past workouts can be sent from their detail screen.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if !healthKit.statusMessage.isEmpty {
-                            Text(healthKit.statusMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        Text("Apple Health isn't available on this device.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Section("iPhone Files App & Lossless Archive") {
+                Section("Storage") {
                     HStack {
                         Text("Fighter Profiles File")
                         Spacer()
@@ -306,8 +314,9 @@ struct ProfileSettingsView: View {
                         workoutStore.runLosslessAutoCompression()
                     }
                 }
+                }
             }
-            .navigationTitle("Fighter & Zones")
+            .navigationTitle("Fighter")
             .alert("New Fighter Profile", isPresented: $showingNewProfileAlert) {
                 TextField("Fighter Name", text: $newFighterName)
                 Button("Create") {

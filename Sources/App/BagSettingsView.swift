@@ -3,43 +3,11 @@ import SwiftUI
 struct BagSettingsSheet: View {
     @Binding var prefs: BagPreferences
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("fight.advanced.bag") private var showAdvanced = false
 
     var body: some View {
         NavigationStack {
             Form {
-                Section {
-                    Picker("Callouts", selection: $prefs.mode) {
-                        ForEach(BagCoachMode.allCases) { Text($0.displayName).tag($0) }
-                    }
-                    Picker("Tempo", selection: $prefs.tempo) {
-                        ForEach(BagTempo.allCases) { Text($0.displayName).tag($0) }
-                    }
-                    Toggle("Number calls (1 = jab, 2 = cross…)", isOn: $prefs.numberCalls)
-                } header: {
-                    Text("Calling")
-                } footer: {
-                    Text("Tempo is the reset time after you've thrown the combo. Burnout keeps combos short and resets fast. The next combo is only called once you've heard the last one.")
-                }
-
-                Section("You") {
-                    Picker("Stance", selection: $prefs.stance) {
-                        ForEach(Stance.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    Picker("Level", selection: $prefs.difficulty) {
-                        ForEach(BagDifficulty.allCases) { d in
-                            Text("\(d.rawValue) (\(d.lengthRange.lowerBound)–\(d.lengthRange.upperBound) strikes)").tag(d)
-                        }
-                    }
-                }
-
-                Section("Strikes") {
-                    Toggle("Kicks & teeps", isOn: $prefs.includeKicks)
-                    Toggle("Knees & elbows", isOn: $prefs.includeKneesElbows)
-                    Toggle("Defence & counters", isOn: $prefs.includeDefense)
-                    Toggle("Dutch finish (end on a kick)", isOn: $prefs.dutchFinish)
-                        .disabled(!prefs.includeKicks)
-                }
-
                 Section {
                     Picker("Total time", selection: $prefs.totalMinutes) {
                         ForEach([5, 10, 15, 20, 30, 45, 60], id: \.self) { Text("\($0) min").tag($0) }
@@ -53,27 +21,64 @@ struct BagSettingsSheet: View {
                 } header: {
                     Text("Session")
                 } footer: {
-                    Text("\(prefs.estimatedTotalRounds) rounds. You'll hear \"Final round\", a 10-second clapper, a triple bell at the end, and a \"Punch out!\" flurry in each round's last 10 seconds.")
+                    Text("\(prefs.estimatedTotalRounds) rounds.")
                 }
 
-                Section {
-                    Toggle("Adaptive tempo", isOn: $prefs.adaptiveTempo)
-                } footer: {
-                    Text("With a coach plan loaded, the pace speeds up when you're below the target heart-rate band and eases off when you're above it.")
-                }
-
-                Section {
-                    NavigationLink {
-                        CustomComboEditor(prefs: $prefs)
-                    } label: {
-                        LabeledContent("My combos", value: "\(prefs.customCombos.count)")
+                Section("Style") {
+                    Picker("Pace", selection: $prefs.tempo) {
+                        ForEach(BagTempo.allCases) { Text($0.displayName).tag($0) }
                     }
-                    Toggle("Only use my combos", isOn: $prefs.customOnly)
-                        .disabled(prefs.customCombos.isEmpty)
-                } header: {
-                    Text("Custom drills")
+                    Picker("Stance", selection: $prefs.stance) {
+                        ForEach(Stance.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                    Picker("Level", selection: $prefs.difficulty) {
+                        ForEach(BagDifficulty.allCases) { Text($0.rawValue).tag($0) }
+                    }
+                }
+
+                Section {
+                    Toggle("Show advanced settings", isOn: $showAdvanced)
                 } footer: {
-                    Text("Your combos are mixed into the rotation, or used exclusively for focused drilling.")
+                    Text("Call style, strike types, adaptive pace and your own combos.")
+                }
+
+                if showAdvanced {
+                    Section {
+                        Picker("Callouts", selection: $prefs.mode) {
+                            ForEach(BagCoachMode.allCases) { Text($0.displayName).tag($0) }
+                        }
+                        Toggle("Number calls (1 = jab, 2 = cross…)", isOn: $prefs.numberCalls)
+                    } header: {
+                        Text("Calling")
+                    } footer: {
+                        Text("Pace is the reset after you've thrown. The next combo is only called once you've heard the last one. Each round ends with a 10-second clapper and a \"Punch out!\" flurry.")
+                    }
+
+                    Section("Strikes") {
+                        Toggle("Kicks & teeps", isOn: $prefs.includeKicks)
+                        Toggle("Knees & elbows", isOn: $prefs.includeKneesElbows)
+                        Toggle("Defence & counters", isOn: $prefs.includeDefense)
+                        Toggle("Dutch finish (end on a kick)", isOn: $prefs.dutchFinish)
+                            .disabled(!prefs.includeKicks)
+                    }
+
+                    Section {
+                        Toggle("Adaptive pace", isOn: $prefs.adaptiveTempo)
+                    } footer: {
+                        Text("With a heart-rate target loaded, the pace speeds up when you're below it and eases off when you're above it.")
+                    }
+
+                    Section {
+                        NavigationLink {
+                            CustomComboEditor(prefs: $prefs)
+                        } label: {
+                            LabeledContent("My combos", value: "\(prefs.customCombos.count)")
+                        }
+                        Toggle("Only use my combos", isOn: $prefs.customOnly)
+                            .disabled(prefs.customCombos.isEmpty)
+                    } header: {
+                        Text("Custom drills")
+                    }
                 }
             }
             .navigationTitle("Bag Coach")

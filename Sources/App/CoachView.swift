@@ -61,8 +61,8 @@ struct CoachView: View {
         ScrollView {
             VStack(spacing: 16) {
                 readinessCard(report)
-                plansEntryCard
                 nextWorkoutCard(report.nextWorkout)
+                plansEntryCard
 
                 if let plan = CampPlanner.buildPlan(profile: workoutStore.activeProfile, workouts: workoutStore.workouts),
                    let week = plan.currentWeek {
@@ -93,8 +93,7 @@ struct CoachView: View {
                 }
 
                 if report.hasEnoughData {
-                    fightFitnessSection(report)
-                    loadChartCard(report)
+                    fightFitnessSummary(report)
                 } else {
                     ContentUnavailableView {
                         Label("Your coach is learning", systemImage: "figure.kickboxing")
@@ -104,11 +103,20 @@ struct CoachView: View {
                     .padding(.vertical)
                 }
 
-                if !report.recommendations.isEmpty {
-                    recommendationsSection(report.recommendations)
+                if let tip = report.recommendations.first {
+                    recommendationsSection([tip], title: "Coach's Tip")
                 }
 
-                thresholdsCard(report)
+                AdvancedSection("Performance details", subtitle: "All ratings, training load, notes, thresholds", key: "coach.details") {
+                    if report.hasEnoughData {
+                        fightFitnessSection(report)
+                        loadChartCard(report)
+                    }
+                    if report.recommendations.count > 1 {
+                        recommendationsSection(Array(report.recommendations.dropFirst()), title: "More Notes")
+                    }
+                    thresholdsCard(report)
+                }
             }
             .padding()
         }
@@ -260,6 +268,28 @@ struct CoachView: View {
 
     // MARK: Fight fitness
 
+    private func fightFitnessSummary(_ report: CoachReport) -> some View {
+        HStack(spacing: 14) {
+            ScoreRing(score: report.fightFitness, color: MetricScore.color(for: report.fightFitness), lineWidth: 7)
+                .frame(width: 56, height: 56)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Fight Fitness").font(.headline)
+                if let weakest = report.focusAreas.first, let score = weakest.score {
+                    Text("Work on: \(weakest.title) (\(score))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Ratings from your last 4 weeks")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .card()
+        .accessibilityElement(children: .combine)
+    }
+
     private func fightFitnessSection(_ report: CoachReport) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .firstTextBaseline) {
@@ -362,9 +392,9 @@ struct CoachView: View {
 
     // MARK: Recommendations
 
-    private func recommendationsSection(_ recs: [CoachRecommendation]) -> some View {
+    private func recommendationsSection(_ recs: [CoachRecommendation], title: String = "Coach's Notes") -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Coach's Notes")
+            Text(title)
                 .font(.title3.weight(.bold))
             ForEach(recs) { rec in
                 HStack(alignment: .top, spacing: 12) {
@@ -550,11 +580,13 @@ struct MetricDetailSheet: View {
 
 struct CoachReviewCard: View {
     let review: WorkoutReview
+    var showItems = true
+    var showTakeaways = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label("COACH REVIEW", systemImage: "person.fill.checkmark")
+                Label(showTakeaways ? "COACH REVIEW" : "REVIEW BREAKDOWN", systemImage: "person.fill.checkmark")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.purple)
                 Spacer()
@@ -568,6 +600,7 @@ struct CoachReviewCard: View {
             }
             .accessibilityElement(children: .combine)
 
+            if showItems {
             ForEach(review.items) { item in
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
@@ -588,14 +621,16 @@ struct CoachReviewCard: View {
                 .accessibilityElement(children: .combine)
             }
 
-            if let load = review.loadComparison {
+            }
+
+            if showItems, let load = review.loadComparison {
                 Label(load, systemImage: "scalemass")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            if !review.takeaways.isEmpty {
-                Divider()
+            if showTakeaways && !review.takeaways.isEmpty {
+                if showItems { Divider() }
                 Text("Next time").font(.subheadline.weight(.bold))
                 ForEach(review.takeaways, id: \.self) { t in
                     Label {

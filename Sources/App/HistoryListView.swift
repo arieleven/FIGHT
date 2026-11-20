@@ -17,59 +17,8 @@ struct HistoryListView: View {
     }
 
     var body: some View {
-        let acwr = workoutStore.acuteChronicWorkloadRatio
-
         NavigationStack {
             List {
-                Section {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("FIGHT CAMP READINESS (ACWR)")
-                                .font(.caption2.weight(.heavy))
-                                .foregroundStyle(.secondary)
-                            Text(String(format: "%.2f • %@", acwr.ratio, acwr.status))
-                                .font(.subheadline.weight(.bold))
-                                .foregroundStyle(acwr.ratio > 1.4 ? .orange : .green)
-                        }
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 3) {
-                            Text("7-DAY TRIMP")
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(.secondary)
-                            let weekTRIMP = workoutStore.workouts
-                                .filter { $0.startDate >= Date().addingTimeInterval(-7 * 86400) }
-                                .reduce(0.0) { $0 + $1.effectiveLoad }
-                            Text("\(Int(weekTRIMP))")
-                                .font(.headline.monospacedDigit())
-                                .foregroundStyle(.cyan)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Section {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            Toggle("Only \(workoutStore.activeProfile.name)", isOn: $filterByCurrentFighter)
-                                .toggleStyle(.button)
-                                .controlSize(.small)
-
-                            Button("All Disciplines") { selectedFilter = nil }
-                                .buttonStyle(.bordered)
-                                .tint(selectedFilter == nil ? .green : .secondary)
-                                .controlSize(.small)
-
-                            ForEach(WorkoutCategory.allCases) { cat in
-                                Button(cat.rawValue) { selectedFilter = cat }
-                                    .buttonStyle(.bordered)
-                                    .tint(selectedFilter == cat ? .green : .secondary)
-                                    .controlSize(.small)
-                            }
-                        }
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
-
                 if filteredWorkouts.isEmpty {
                     ContentUnavailableView(
                         "No Workouts Logged",
@@ -91,8 +40,21 @@ struct HistoryListView: View {
                     }
                 }
             }
-            .navigationTitle("Training Log")
+            .navigationTitle("History")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Toggle("Only \(workoutStore.activeProfile.name)", isOn: $filterByCurrentFighter)
+                        Picker("Discipline", selection: $selectedFilter) {
+                            Text("All disciplines").tag(Optional<WorkoutCategory>.none)
+                            ForEach(WorkoutCategory.allCases) { cat in
+                                Text(cat.rawValue).tag(Optional(cat))
+                            }
+                        }
+                    } label: {
+                        Label("Filter", systemImage: selectedFilter == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
