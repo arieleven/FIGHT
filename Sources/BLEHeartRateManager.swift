@@ -22,13 +22,24 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     @Published var deviceName: String = "Coospo HW9"
     @Published var currentBPM: Int = 0
     @Published var batteryLevel: Int? = nil
+    @Published var latestRRMs: Double? = nil
+    @Published var rollingRMSSD: Double? = nil
 
-    var onHeartRateSample: ((Int, Date) -> Void)?
+    // 60-second Morning / Pre-Training HRV Check
+    @Published var isHRVScanning = false
+    @Published var hrvScanSecondsLeft: Int = 60
+    @Published var lastMorningHRV: Double? = nil
+
+    var onHeartRateSample: ((Int, Double?, Date) -> Void)?
 
     private var centralManager: CBCentralManager!
     private var connectedPeripheral: CBPeripheral?
     private var shouldAutoReconnect = false
     private let savedDeviceKey = "LastConnectedHRMonitorUUID"
+
+    private var recentRRIntervals: [Double] = []
+    private var hrvScanRRBuffer: [Double] = []
+    private var hrvScanTimer: Timer?
 
     override init() {
         super.init()
@@ -73,21 +84,94 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
         connectedPeripheral = nil
         currentBPM = 0
         batteryLevel = nil
+        latestRRMs = nil
         connectionState = .disconnected
     }
 
-    private func parseHeartRate(from data: Data) -> Int? {
+    func startMorningHRVScan(onComplete: @escaping (Double?) -> Void) {
+        guard connectionState == .connected else { return }
+        hrvScanRRBuffer.removeAll()
+        hrvScanSecondsLeft = 60
+        isHRVScanning = true
+
+        hrvScanTimer?.invalidate()
+        hrvScanTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+            Task { @MainActor in
+                guard let self else { timer.invalidate(); return }
+                if self.hrvScanSecondsLeft > 1 {
+                    self.hrvScanSecondsLeft -= 1
+                } else {
+                    timer.invalidate()
+                    self.isHRVScanning = false
+                    let result = Self.computeRMSSD(from: self.hrvScanRRBuffer) ?? self.rollingRMSSD
+                    self.lastMorningHRV = result
+                    onComplete(result)
+                }
+            }
+        }
+    }
+
+    func cancelMorningHRVScan() {
+        hrvScanTimer?.invalidate()
+        isHRVScanning = false
+    }
+
+    /// Parses Bluetooth SIG 0x2A37 Heart Rate Measurement + optional RR-Intervals (1/1024s units)
+    private func parseHeartRatePacket(from data: Data) -> (bpm: Int, rrIntervalsMs: [Double])? {
         let bytes = [UInt8](data)
         guard !bytes.isEmpty else { return nil }
-        let isUInt16 = (bytes[0] & 0x01) != 0
+
+        let flags = bytes[0]
+        let isUInt16 = (flags & 0x01) != 0
+        let energyExpendedPresent = (flags & 0x08) != 0
+        let rrIntervalPresent = (flags & 0x10) != 0
+
+        var offset = 1
+        let bpm: Int
 
         if isUInt16 {
             guard bytes.count >= 3 else { return nil }
-            return Int(UInt16(bytes[1]) | (UInt16(bytes[2]) << 8))
+            bpm = Int(UInt16(bytes[1]) | (UInt16(bytes[2]) << 8))
+            offset = 3
         } else {
             guard bytes.count >= 2 else { return nil }
-            return Int(bytes[1])
+            bpm = Int(bytes[1])
+            offset = 2
         }
+
+        if energyExpendedPresent {
+            offset += 2
+        }
+
+        var rrValues: [Double] = []
+        if rrIntervalPresent {
+            while offset + 1 < bytes.count {
+                let rawRR = UInt16(bytes[offset]) | (UInt16(bytes[offset + 1]) << 8)
+                let rrMs = (Double(rawRR) / 1024.0) * 1000.0
+                if rrMs >= 250.0 && rrMs <= 2000.0 {
+                    rrValues.append(rrMs)
+                }
+                offset += 2
+            }
+        }
+
+        return (bpm, rrValues)
+    }
+
+    static func computeRMSSD(from rrIntervals: [Double]) -> Double? {
+        guard rrIntervals.count >= 5 else { return nil }
+        var sumSquaredDiffs = 0.0
+        var count = 0
+        for i in 1..<rrIntervals.count {
+            let diff = rrIntervals[i] - rrIntervals[i - 1]
+            // Filter ectopic/motion artifact spikes > 250ms jump
+            if abs(diff) < 250.0 {
+                sumSquaredDiffs += diff * diff
+                count += 1
+            }
+        }
+        guard count >= 4 else { return nil }
+        return sqrt(sumSquaredDiffs / Double(count))
     }
 }
 
@@ -191,9 +275,22 @@ extension BLEHeartRateManager: CBPeripheralDelegate {
             guard let data = characteristic.value else { return }
 
             if characteristic.uuid == heartRateMeasurementUUID,
-               let bpm = parseHeartRate(from: data), bpm > 0 {
-                currentBPM = bpm
-                onHeartRateSample?(bpm, Date())
+               let parsed = parseHeartRatePacket(from: data), parsed.bpm > 0 {
+                currentBPM = parsed.bpm
+
+                if !parsed.rrIntervalsMs.isEmpty {
+                    latestRRMs = parsed.rrIntervalsMs.last
+                    recentRRIntervals.append(contentsOf: parsed.rrIntervalsMs)
+                    if recentRRIntervals.count > 60 {
+                        recentRRIntervals.removeFirst(recentRRIntervals.count - 60)
+                    }
+                    rollingRMSSD = Self.computeRMSSD(from: recentRRIntervals)
+                    if isHRVScanning {
+                        hrvScanRRBuffer.append(contentsOf: parsed.rrIntervalsMs)
+                    }
+                }
+
+                onHeartRateSample?(parsed.bpm, parsed.rrIntervalsMs.last, Date())
             } else if characteristic.uuid == batteryLevelUUID,
                       let level = data.first {
                 batteryLevel = Int(level)

@@ -5,12 +5,46 @@ struct ContentView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
 
     var body: some View {
+        TabView {
+            trainTab
+                .tabItem {
+                    Label("Train", systemImage: "heart.fill")
+                }
+
+            CoachSummaryView()
+                .tabItem {
+                    Label("Coach", systemImage: "chart.line.uptrend.xyaxis")
+                }
+
+            ProfileSettingsView()
+                .tabItem {
+                    Label("Fighter", systemImage: "person.crop.circle")
+                }
+        }
+        .onAppear {
+            bleManager.onHeartRateSample = { bpm, rrMs, date in
+                workoutStore.recordHeartRate(bpm, rrMs: rrMs, at: date)
+            }
+        }
+        .onChange(of: workoutStore.isWorkoutActive) { _, active in
+            UIApplication.shared.isIdleTimerDisabled = active || workoutStore.isMeasuringHRR
+        }
+    }
+
+    // MARK: - Tab 1: Train
+    private var trainTab: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(spacing: 18) {
                     connectionCard
+                    if workoutStore.isMeasuringHRR {
+                        hrrMeasurementCard
+                    }
                     heartRateHeroCard
-                    exerciseSelectorSection
+                    if workoutStore.isWorkoutActive && workoutStore.selectedRoundPreset != .open {
+                        activeRoundCard
+                    }
+                    workoutConfigSection
                     actionButton
 
                     if let status = workoutStore.statusMessage {
@@ -19,21 +53,13 @@ struct ContentView: View {
                             .foregroundStyle(.green)
                     }
 
-                    if !workoutStore.savedWorkouts.isEmpty {
+                    if !workoutStore.activeProfileWorkouts.isEmpty {
                         savedWorkoutsSection
                     }
                 }
                 .padding()
             }
-            .navigationTitle("Coospo Workout")
-            .onAppear {
-                bleManager.onHeartRateSample = { bpm, date in
-                    workoutStore.recordHeartRate(bpm, at: date)
-                }
-            }
-            .onChange(of: workoutStore.isWorkoutActive) { _, active in
-                UIApplication.shared.isIdleTimerDisabled = active
-            }
+            .navigationTitle("\(workoutStore.activeProfile.name) • Train")
         }
     }
 
@@ -53,11 +79,19 @@ struct ContentView: View {
 
             Spacer()
 
+            if let rmssd = bleManager.rollingRMSSD {
+                Text("HRV \(Int(rmssd))ms")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.purple.opacity(0.2), in: Capsule())
+                    .foregroundStyle(.purple)
+            }
+
             if let battery = bleManager.batteryLevel {
                 Label("\(battery)%", systemImage: "battery.75")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                    .padding(.trailing, 6)
             }
 
             if bleManager.connectionState == .connected {
@@ -79,12 +113,47 @@ struct ContentView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
+    private var hrrMeasurementCard: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Image(systemName: "lungs.fill")
+                    .font(.title2)
+                    .foregroundStyle(.cyan)
+                VStack(alignment: .leading) {
+                    Text("MEASURING HEART RATE RECOVERY (HRR-60)")
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(.cyan)
+                    Text("Stand still & breathe normally for \(workoutStore.hrrSecondsRemaining)s")
+                        .font(.subheadline)
+                }
+                Spacer()
+            }
+
+            HStack {
+                Text("Drop so far: -\(workoutStore.hrrCurrentDrop) BPM")
+                    .font(.headline.monospacedDigit())
+                    .foregroundStyle(.green)
+                Spacer()
+                Button("Skip & Save Now") {
+                    workoutStore.skipHRRAndSaveNow()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+        }
+        .padding()
+        .background(Color.cyan.opacity(0.15), in: RoundedRectangle(cornerRadius: 16))
+    }
+
     private var heartRateHeroCard: some View {
-        VStack(spacing: 14) {
+        let profile = workoutStore.activeProfile
+        let zone = profile.zone(for: bleManager.currentBPM)
+
+        return VStack(spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: "heart.fill")
                     .font(.title)
-                    .foregroundStyle(zoneInfo.color)
+                    .foregroundStyle(zone.color)
                 Text(bleManager.currentBPM > 0 ? "\(bleManager.currentBPM)" : "--")
                     .font(.system(size: 72, weight: .bold, design: .rounded))
                     .contentTransition(.numericText())
@@ -93,27 +162,49 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Text(zoneInfo.label)
+            Text(bleManager.currentBPM > 0 ? zone.name.uppercased() : "WAITING FOR PULSE")
                 .font(.caption.weight(.bold))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
-                .background(zoneInfo.color.opacity(0.2), in: Capsule())
-                .foregroundStyle(zoneInfo.color)
+                .background(zone.color.opacity(0.2), in: Capsule())
+                .foregroundStyle(zone.color)
 
             Divider()
 
             HStack {
                 metricItem(title: "TIME", value: formatDuration(workoutStore.elapsedSeconds))
                 Spacer()
-                metricItem(title: "AVG BPM", value: workoutStore.averageBPM > 0 ? "\(workoutStore.averageBPM)" : "--")
+                metricItem(title: "AVG", value: workoutStore.averageBPM > 0 ? "\(workoutStore.averageBPM)" : "--")
                 Spacer()
-                metricItem(title: "MAX BPM", value: workoutStore.maxBPM > 0 ? "\(workoutStore.maxBPM)" : "--")
+                metricItem(title: "MAX", value: workoutStore.maxBPM > 0 ? "\(workoutStore.maxBPM)" : "--")
                 Spacer()
-                metricItem(title: "KCAL", value: "\(Int(workoutStore.estimatedCalories))")
+                metricItem(title: "KCAL (+\(Int(workoutStore.epocBonusCalories)))", value: "\(Int(workoutStore.estimatedCalories))")
             }
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private var activeRoundCard: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("ROUND \(workoutStore.currentRound) • \(workoutStore.isRoundRest ? "STOOL REST" : "WORK")")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(workoutStore.isRoundRest ? .cyan : .orange)
+                Text(workoutStore.isRoundRest ? "Drop HR via slow nasal exhales" : "Keep output sharp")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(formatDuration(TimeInterval(workoutStore.roundSecondsRemaining)))
+                .font(.system(size: 32, weight: .heavy, design: .rounded).monospacedDigit())
+                .foregroundStyle(workoutStore.isRoundRest ? .cyan : .orange)
+        }
+        .padding()
+        .background(
+            (workoutStore.isRoundRest ? Color.cyan : Color.orange).opacity(0.15),
+            in: RoundedRectangle(cornerRadius: 16)
+        )
     }
 
     private func metricItem(title: String, value: String) -> some View {
@@ -126,9 +217,9 @@ struct ContentView: View {
         }
     }
 
-    private var exerciseSelectorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("SELECT WORKOUT")
+    private var workoutConfigSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("DISCIPLINE")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 
@@ -158,21 +249,49 @@ struct ContentView: View {
                     }
                 }
             }
+
+            Text("ROUND BELL TIMER")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(RoundPreset.allCases) { preset in
+                        let selected = workoutStore.selectedRoundPreset == preset
+                        Button {
+                            if !workoutStore.isWorkoutActive {
+                                workoutStore.selectedRoundPreset = preset
+                            }
+                        } label: {
+                            Text(preset.rawValue)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(
+                                    selected ? Color.orange : Color(.secondarySystemBackground),
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(selected ? .white : .primary)
+                        }
+                        .disabled(workoutStore.isWorkoutActive)
+                    }
+                }
+            }
         }
     }
 
     private var actionButton: some View {
         Button {
             if workoutStore.isWorkoutActive {
-                workoutStore.endAndSaveWorkout()
-            } else {
+                workoutStore.initiateFinishAndMeasureHRR(currentBPM: bleManager.currentBPM)
+            } else if !workoutStore.isMeasuringHRR {
                 workoutStore.startWorkout()
             }
         } label: {
             HStack {
                 Image(systemName: workoutStore.isWorkoutActive ? "stop.fill" : "play.fill")
                 Text(workoutStore.isWorkoutActive
-                     ? "End & Save \(workoutStore.selectedCategory.rawValue)"
+                     ? "Finish & Measure 60s Recovery"
                      : "Start \(workoutStore.selectedCategory.rawValue)")
                     .fontWeight(.bold)
             }
@@ -181,40 +300,43 @@ struct ContentView: View {
             .background(workoutStore.isWorkoutActive ? Color.red : Color.green, in: RoundedRectangle(cornerRadius: 16))
             .foregroundStyle(.white)
         }
+        .disabled(workoutStore.isMeasuringHRR)
     }
 
     private var savedWorkoutsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("WORKOUT LOG")
+            Text("WORKOUT LOG (TAP FOR GRAPH & HIGHLIGHTS)")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 
-            ForEach(workoutStore.savedWorkouts) { item in
-                HStack {
-                    Image(systemName: item.category.icon)
-                        .font(.title3)
-                        .foregroundStyle(.green)
-                        .frame(width: 30)
+            ForEach(workoutStore.activeProfileWorkouts) { item in
+                NavigationLink {
+                    WorkoutDetailView(workout: item)
+                } label: {
+                    HStack {
+                        Image(systemName: item.category.icon)
+                            .font(.title3)
+                            .foregroundStyle(.green)
+                            .frame(width: 30)
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("\(item.category.rawValue) • \(item.startDate.formatted(date: .abbreviated, time: .shortened))")
-                            .font(.subheadline.weight(.semibold))
-                        Text("\(formatDuration(item.duration)) • Avg \(item.averageBPM) • Max \(item.maxBPM) BPM • \(Int(item.calories)) kcal")
-                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(item.category.rawValue) • \(item.startDate.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text("\(formatDuration(item.duration)) • Avg \(item.averageBPM) • Max \(item.maxBPM) • \(Int(item.calories)) kcal\(item.hrr60Drop != nil ? " • HRR -\(item.hrr60Drop!)" : "")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
                             .foregroundStyle(.secondary)
                     }
-
-                    Spacer()
-
-                    ShareLink(item: workoutStore.exportTCXFile(for: item)) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.body.weight(.semibold))
-                            .padding(8)
-                            .background(Color(.tertiarySystemFill), in: Circle())
-                    }
+                    .padding()
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
                 }
-                .padding()
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
             }
         }
     }
@@ -224,18 +346,6 @@ struct ContentView: View {
         case .connected: return .green
         case .scanning, .connecting, .reconnecting: return .orange
         case .disconnected, .bluetoothOff: return .red
-        }
-    }
-
-    private var zoneInfo: (label: String, color: Color) {
-        let bpm = bleManager.currentBPM
-        switch bpm {
-        case ..<100: return ("REST / WARM UP", .gray)
-        case 100..<120: return ("ZONE 1 • LIGHT", .blue)
-        case 120..<140: return ("ZONE 2 • FAT BURN", .green)
-        case 140..<160: return ("ZONE 3 • AEROBIC", .yellow)
-        case 160..<175: return ("ZONE 4 • THRESHOLD", .orange)
-        default: return ("ZONE 5 • PEAK", .red)
         }
     }
 
