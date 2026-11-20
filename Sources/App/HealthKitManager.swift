@@ -129,7 +129,19 @@ final class HealthKitManager: ObservableObject {
             }
 
             if !hkSamples.isEmpty {
-                try await builder.add(hkSamples)
+                let samplesToAdd = hkSamples
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    builder.add(samplesToAdd) { success, error in
+                        if let error {
+                            cont.resume(throwing: error)
+                        } else if !success {
+                            cont.resume(throwing: NSError(domain: "CoospoHealth", code: 1,
+                                userInfo: [NSLocalizedDescriptionKey: "Health rejected the workout samples"]))
+                        } else {
+                            cont.resume()
+                        }
+                    }
+                }
             }
 
             var metadata: [String: Any] = [
