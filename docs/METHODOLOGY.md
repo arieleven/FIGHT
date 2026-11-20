@@ -1,6 +1,6 @@
 # Methodology
 
-This page documents how Coospo Workout turns heart-rate data into ratings, readiness, plans and warnings. Every calculation runs on-device. Source files are linked for each section.
+This page documents how FIGHT turns heart-rate data into ratings, readiness, plans and warnings. Every calculation runs on-device. Source files are linked for each section.
 
 > **Scoring convention.** Most components are mapped linearly onto 0–100 between a "worst" and a "best" reference value, clamped at both ends. A metric's score is the weighted mean of the components that have data. Components without data are skipped, and their weight is redistributed. If no component has data, the metric shows *Need Data*. Grades: **Elite** ≥ 85 · **Strong** ≥ 70 · **Solid** ≥ 55 · **Developing** ≥ 40 · **Needs Work** below 40.
 >

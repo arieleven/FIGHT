@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="docs/assets/banner.svg" alt="Coospo Workout — data-driven conditioning for fighters" width="100%">
+  <img src="docs/assets/banner.svg" alt="FIGHT — data-driven conditioning for fighters" width="100%">
 </p>
 
 <p align="center">
-  <a href="https://github.com/drivepulator/CoospoTracker/actions/workflows/build.yml"><img src="https://github.com/drivepulator/CoospoTracker/actions/workflows/build.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/drivepulator/FIGHT/actions/workflows/build.yml"><img src="https://github.com/drivepulator/FIGHT/actions/workflows/build.yml/badge.svg" alt="Build"></a>
   <img src="https://img.shields.io/badge/iOS-17%2B-000000?logo=apple&logoColor=white" alt="iOS 17+">
   <img src="https://img.shields.io/badge/Swift-5-F05138?logo=swift&logoColor=white" alt="Swift 5">
   <img src="https://img.shields.io/badge/SwiftUI-Charts%20%7C%20ActivityKit-0A84FF" alt="SwiftUI">
@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <b>Turn every round into data.</b> Coospo Workout is an iPhone app for kickboxers, Muay Thai and MMA athletes. It streams your heart-rate monitor in real time, rates your performance on every tracked metric, and plans your next session, your fight camp and your weight cut around the numbers.
+  <b>Turn every round into data.</b> FIGHT is an iPhone app for kickboxers, Muay Thai and MMA athletes. It streams your heart-rate monitor in real time, rates your performance on every tracked metric, and plans your next session, your fight camp and your weight cut around the numbers.
 </p>
 
 ---
@@ -32,9 +32,9 @@
 
 ## Why it exists
 
-Generic fitness apps are built for runners. Fighters train in **rounds**, recover on a **stool**, cut **weight**, and peak for **one night**. Coospo Workout is built around that reality:
+Generic fitness apps are built for runners. Fighters train in **rounds**, recover on a **stool**, cut **weight**, and peak for **one night**. FIGHT is built around that reality:
 
-| Fighters ask… | Coospo Workout answers with… |
+| Fighters ask… | FIGHT answers with… |
 |---|---|
 | *Am I recovered enough to spar today?* | A daily **readiness score** from training load, morning HRV, resting HR, sleep and soreness |
 | *Is my gas tank getting better?* | **Fight Stamina** and **Recovery Speed** ratings built from round-by-round HR creep and 60-second stool recovery |
@@ -116,24 +116,32 @@ Every rating is computed on your phone from your own data, using established spo
 
 ## Supported sensors
 
-Any monitor that implements the standard **Bluetooth Heart Rate Profile** (service `0x180D`) works.
+FIGHT works with **any Bluetooth heart rate monitor** that implements the standard Bluetooth Heart Rate Profile (service `0x180D`). That includes virtually every chest strap, armband and sports watch sold today.
 
-| Sensor type | Live HR and zones | Round / recovery metrics | HRV readiness (at rest) | Threshold detection in exercise |
-|---|:---:|:---:|:---:|:---:|
-| **Optical armband** (e.g. CooSpo HW9) | ✅ | ✅ | ✅ if RR is broadcast | ⚠️ often too noisy |
-| **Chest strap** (e.g. CooSpo H808S / H9Z, Polar H10, Garmin HRM) | ✅ | ✅ | ✅ | ✅ |
+| Sensor type | Examples | Live HR and zones | Round / recovery metrics | HRV readiness (at rest) | Threshold detection in exercise |
+|---|---|:---:|:---:|:---:|:---:|
+| **Chest strap** (ECG) | Polar H10 / H9, Garmin HRM-Pro / HRM-Dual, Wahoo TICKR, Suunto Smart Sensor | ✅ | ✅ | ✅ | ✅ |
+| **Optical armband** | Polar Verity Sense, Scosche Rhythm, Wahoo TICKR Fit, generic armbands | ✅ | ✅ | ✅ if RR is broadcast | ⚠️ often too noisy |
+| **Watch in broadcast mode** | Garmin, Polar, Coros, Suunto, Amazfit (HR broadcast setting) | ✅ | ✅ | ⚠️ varies | ❌ usually no RR |
 
-Beat-to-beat (RR) features measure signal quality first: artifact rate and coverage. When the data is too noisy to trust, the app falls back to heart-rate-only analysis instead of showing bad numbers.
+**How connection works**
+- **Detection:** sensors that advertise the heart-rate service are listed first. Watches and sensors that reveal it only after connecting appear under **Show all nearby devices**. FIGHT verifies the heart-rate service on connect, and tells you if a device doesn't provide one.
+- **Sensor details:** manufacturer, model, battery and body location (chest, wrist and so on) are read automatically. The sensor's name is recorded with each Apple Health workout.
+- **Reconnects:** if the signal drops mid-round, FIGHT reconnects automatically. When a sensor stops sending, the BPM is cleared after 5 seconds, so stale values are never recorded.
+
+**Data quality.** Beat-to-beat (RR) features (HRV, DFA α1, threshold detection) check artifact rate and coverage first, and fall back to heart-rate-only analysis when the signal is too noisy. For the most accurate HRV and threshold detection, use a chest strap.
+
+> **Apple Watch** doesn't broadcast standard Bluetooth heart rate on its own. To use one, you need a third-party heart-rate broadcast app on the watch.
 
 ## Install on your iPhone
 
 No Mac needed. Every push to `main` is built in the cloud by GitHub Actions.
 
-1. Open the [latest successful build](https://github.com/drivepulator/CoospoTracker/actions/workflows/build.yml) and download the **`CoospoTracker-IPA`** artifact.
-2. Unzip it to get `CoospoTracker.ipa`.
+1. Open the [latest successful build](https://github.com/drivepulator/FIGHT/actions/workflows/build.yml) and download the **`FIGHT-IPA`** artifact.
+2. Unzip it to get `FIGHT.ipa`.
 3. Install it with [Sideloadly](https://sideloadly.io/) (Windows or macOS) using your Apple ID.
 4. On the iPhone, trust the developer under **Settings › General › VPN & Device Management**, and enable **Developer Mode** if prompted.
-5. Open the app, allow Bluetooth, and connect your monitor from the antenna icon.
+5. Open the app, allow Bluetooth, put your sensor on, and connect it from the antenna icon.
 
 > **Free Apple ID notes:** apps signed this way expire after 7 days, so re-install from Sideloadly to refresh (your data is kept). The app and its Live Activity widget together use 2 of your 3 free app slots. Whether Apple Health access is granted depends on your signing account. If it isn't, the rest of the app works normally.
 
@@ -143,13 +151,13 @@ No Mac needed. Every push to `main` is built in the cloud by GitHub Actions.
 
 ```bash
 brew install xcodegen
-git clone https://github.com/drivepulator/CoospoTracker.git
-cd CoospoTracker
+git clone https://github.com/drivepulator/FIGHT.git
+cd FIGHT
 xcodegen generate
-open CoospoTracker.xcodeproj
+open FIGHT.xcodeproj
 ```
 
-Set your signing team on both targets (`CoospoTracker` and `CoospoWidgetExtension`), enable the HealthKit capability, and run on a device. Bluetooth isn't available in the simulator.
+Set your signing team on both targets (`FIGHT` and `FIGHTWidget`), enable the HealthKit capability, and run on a device. Bluetooth isn't available in the simulator.
 
 **In CI:** [`.github/workflows/build.yml`](.github/workflows/build.yml) generates the project, builds an unsigned Release app, checks that the required `Info.plist` keys are present (Bluetooth, background modes, Live Activities, Health), embeds the HealthKit entitlement with an ad-hoc signature, and uploads the IPA.
 
@@ -158,16 +166,16 @@ Set your signing team on both targets (`CoospoTracker` and `CoospoWidgetExtensio
 ## Project structure
 
 ```
-CoospoTracker/
+FIGHT/
 ├── project.yml                     # XcodeGen spec (app + Live Activity widget)
 ├── Config/
-│   └── CoospoTracker.entitlements  # HealthKit
+│   └── FIGHT.entitlements          # HealthKit
 ├── .github/workflows/build.yml     # Cloud build → IPA
-├── docs/                           # Methodology and assets
+├── docs/                           # Methodology, logo and banner
 └── Sources/
     ├── App/
-    │   ├── CoospoTrackerApp.swift      # Tab shell and dependency injection
-    │   ├── BLEHeartRateManager.swift   # CoreBluetooth HR Profile, RR parsing, auto-reconnect
+    │   ├── FightApp.swift              # Tab shell and dependency injection
+    │   ├── BLEHeartRateManager.swift   # Universal BLE Heart Rate Profile, RR, device info, auto-reconnect
     │   ├── LiveWorkoutView.swift       # Live Corner: rounds, zones, plan mode, Live Activity
     │   ├── AudioCoachEngine.swift      # Synthesized voice combos, bells, spoken coaching
     │   ├── CoachEngine.swift           # Ratings, load model, prescriptions, workout reviews
@@ -180,6 +188,7 @@ CoospoTracker/
     │   ├── HealthKitManager.swift      # Apple Health workout export
     │   ├── WorkoutStore.swift          # On-device persistence, archives, TCX import/export
     │   ├── Models.swift                # Profiles, zones, sessions, physiology formulas
+    │   ├── Assets.xcassets             # App icon
     │   └── …                           # History, detail, comparison, settings views
     ├── Shared/                     # ActivityKit attributes (app ↔ widget)
     └── Widget/                     # Lock Screen and Dynamic Island Live Activity
@@ -196,13 +205,13 @@ CoospoTracker/
 - [ ] Fight-night simulation mode with walkout, corner timing and score card
 - [ ] Apple Watch motion-based strike counting and output-per-heartbeat efficiency
 - [ ] Sparring video synced to the HR trace
-- [ ] Dual-sensor mode (armband + chest strap) for lab-grade HRV in hard rounds
+- [ ] Dual-sensor mode (e.g. armband + chest strap) for lab-grade HRV in hard rounds
 - [ ] Imperial units
 
-Have an idea that would help fighters train smarter? [Open an issue](https://github.com/drivepulator/CoospoTracker/issues).
+Have an idea that would help fighters train smarter? [Open an issue](https://github.com/drivepulator/FIGHT/issues).
 
 ## Disclaimer
 
-Coospo Workout provides training estimates derived from heart-rate data. It is **not a medical device** and does not provide medical advice. Weight cutting and dehydration carry serious health risks: work with a qualified coach, physician or sports dietitian, and follow your athletic commission's rules. Stop training and seek medical help if you feel unwell.
+FIGHT provides training estimates derived from heart-rate data. It is **not a medical device** and does not provide medical advice. Weight cutting and dehydration carry serious health risks: work with a qualified coach, physician or sports dietitian, and follow your athletic commission's rules. Stop training and seek medical help if you feel unwell.
 
-Coospo Workout is an independent project and is not affiliated with or endorsed by CooSpo.
+Product names mentioned under supported sensors are trademarks of their respective owners. FIGHT is an independent project and is not affiliated with any sensor manufacturer.
