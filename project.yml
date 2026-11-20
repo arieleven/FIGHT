@@ -42,9 +42,13 @@ targets:
       - path: Sources/Shared
     info:
       path: Sources/Widget/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shon.coospotracker.widget
         PRODUCT_NAME: CoospoWidgetExtension
         INFOPLIST_FILE: Sources/Widget/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES
