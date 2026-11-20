@@ -663,21 +663,30 @@ struct LiveWorkoutView: View {
                     ForEach(recent) { pt in
                         LineMark(
                             x: .value("Time", pt.elapsedSeconds),
-                            y: .value("Live BPM", pt.bpm)
+                            y: .value("BPM", pt.bpm)
                         )
-                        .foregroundStyle(.red)
+                        .foregroundStyle(by: .value("Series", "Live"))
                         .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    }
 
-                        if let ghost = selectedGhost, let gBPM = ghost.interpolatedBPM(at: pt.elapsedSeconds) {
-                            LineMark(
-                                x: .value("Time", pt.elapsedSeconds),
-                                y: .value("Ghost BPM", gBPM)
-                            )
-                            .foregroundStyle(.purple.opacity(0.8))
-                            .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                    if let ghost = selectedGhost {
+                        ForEach(recent) { pt in
+                            if let gBPM = ghost.interpolatedBPM(at: pt.elapsedSeconds) {
+                                LineMark(
+                                    x: .value("Time", pt.elapsedSeconds),
+                                    y: .value("BPM", gBPM)
+                                )
+                                .foregroundStyle(by: .value("Series", "Ghost"))
+                                .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                            }
                         }
                     }
                 }
+                .chartForegroundStyleScale([
+                    "Live": Color.red,
+                    "Ghost": Color.purple.opacity(0.8)
+                ])
+                .chartLegend(.hidden)
                 .chartYScale(domain: 55...210)
                 .chartXAxis(.hidden)
                 .frame(height: 130)
@@ -772,6 +781,7 @@ struct LiveWorkoutView: View {
 
         startTime = Date()
         isRecording = true
+        UIApplication.shared.isIdleTimerDisabled = true
 
         if roundTimerEnabled || bagConfig.enabled {
             audioCoach.playBellCue()
@@ -1006,6 +1016,7 @@ struct LiveWorkoutView: View {
         timer = nil
         audioCoach.stopBagCoachLoop()
         isRecording = false
+        UIApplication.shared.isIdleTimerDisabled = false
         endLiveActivity()
 
         let end = Date()

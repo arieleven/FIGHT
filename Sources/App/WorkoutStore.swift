@@ -420,6 +420,11 @@ final class TCXStreamParser: NSObject, XMLParserDelegate {
     private var currentBPM: Int?
     private var firstDate: Date?
     private let iso = ISO8601DateFormatter()
+    private let isoFractional: ISO8601DateFormatter = {
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fmt
+    }()
 
     static func parse(data: Data, fallbackName: String) -> GhostSession? {
         let delegate = TCXStreamParser()
@@ -461,7 +466,7 @@ final class TCXStreamParser: NSObject, XMLParserDelegate {
         let trimmed = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
         if inTrackpoint {
             if elementName == "Time" {
-                currentTimestamp = iso.date(from: trimmed)
+                currentTimestamp = isoFractional.date(from: trimmed) ?? iso.date(from: trimmed)
             } else if inHeartRate && elementName == "Value" {
                 currentBPM = Int(trimmed)
             } else if elementName == "HeartRateBpm" {

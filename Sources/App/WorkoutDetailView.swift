@@ -235,17 +235,17 @@ struct WorkoutDetailView: View {
                             y: .value("BPM", pt.bpm)
                         )
                         .lineStyle(StrokeStyle(lineWidth: 2.0))
-                        .foregroundStyle(.red)
+                        .foregroundStyle(by: .value("Series", "Heart Rate"))
                     }
 
                     if showRollingTrend {
                         ForEach(rollingTrendSamples) { pt in
                             LineMark(
-                                x: .value("Trend Time", pt.elapsedSeconds),
-                                y: .value("Trend BPM", pt.bpm)
+                                x: .value("Time (s)", pt.elapsedSeconds),
+                                y: .value("BPM", pt.bpm)
                             )
                             .lineStyle(StrokeStyle(lineWidth: 1.8, dash: [5, 3]))
-                            .foregroundStyle(.cyan.opacity(0.85))
+                            .foregroundStyle(by: .value("Series", "Trend"))
                         }
                     }
 
@@ -284,6 +284,11 @@ struct WorkoutDetailView: View {
                         .foregroundStyle(.white)
                     }
                 }
+                .chartForegroundStyleScale([
+                    "Heart Rate": Color.red,
+                    "Trend": Color.cyan.opacity(0.85)
+                ])
+                .chartLegend(.hidden)
                 .chartYScale(domain: max(45, workout.minBPM - 10)...min(235, workout.maxBPM + 18))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 5)) { value in
