@@ -831,6 +831,20 @@ enum CoachEngine {
                                note: "Peaked at \(Int(pct * 100))% of max HR"))
         }
 
+        // Training-plan completion and time in each block's target
+        if !w.blockResults.isEmpty {
+            let done = w.blockResults.filter(\.completed).count
+            let targeted = w.blockResults.compactMap(\.timeInTarget)
+            let completion = Double(done) / Double(w.blockResults.count)
+            let targetScore = targeted.isEmpty ? nil : targeted.reduce(0, +) / Double(targeted.count)
+            let score = blend([(completion * 100, 0.6), (targetScore.map { scale($0, worst: 0.3, best: 0.8) }, 0.4)]) ?? Int(completion * 100)
+            items.append(.init(title: "Plan Execution", icon: "list.bullet.rectangle.portrait.fill", score: score,
+                               note: "\(done)/\(w.blockResults.count) blocks completed" + (targetScore.map { " • \(Int($0 * 100))% in target" } ?? "")))
+            if done < w.blockResults.count {
+                takeaways.append("Some blocks were skipped or cut short. If the plan was too long, tell your coach so it can be adjusted.")
+            }
+        }
+
         // 6. Coach plan adherence
         if let adherence = w.planAdherence, let lo = w.planTargetLow, let hi = w.planTargetHigh {
             items.append(.init(title: "Plan Adherence", icon: "list.clipboard.fill",

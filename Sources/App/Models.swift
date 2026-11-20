@@ -337,48 +337,6 @@ enum DrillTag: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
-// MARK: - Bag Coach & Combination Metronome Config
-
-enum BagCoachMode: String, Codable, CaseIterable, Identifiable {
-    case voiceCombos = "Voice Callouts"
-    case cadenceBeep = "Strike-Cue Beep"
-    case hybrid = "Voice + Cue Beep"
-
-    var id: String { rawValue }
-}
-
-enum BagTempo: String, Codable, CaseIterable, Identifiable {
-    case technical = "Technical (9–12s)"
-    case steady = "Steady Tempo (6–9s)"
-    case fightPace = "Fight Pace (4–7s)"
-    case burnout = "Burnout (2.5–4.5s)"
-    case variable = "Variable Fight Flow"
-
-    var id: String { rawValue }
-
-    func pauseRange(roundProgress: Double) -> ClosedRange<Double> {
-        switch self {
-        case .technical:
-            return 8.5...11.5
-        case .steady:
-            return 5.5...8.5
-        case .fightPace:
-            return 3.8...6.5
-        case .burnout:
-            return 2.2...4.0
-        case .variable:
-            if roundProgress < 0.35 {
-                return 7.0...9.5
-            } else if roundProgress < 0.80 {
-                return 4.0...6.2
-            } else {
-                return 2.2...3.5
-            }
-        }
-    }
-}
-
-
 // MARK: - Telemetry & Analytics Models
 
 struct HeartRatePoint: Codable, Identifiable, Equatable {
@@ -564,6 +522,9 @@ struct SavedWorkout: Codable, Identifiable {
     var planTargetLow: Int?
     var planTargetHigh: Int?
     var planAdherence: Double?
+    var trainingPlanID: UUID?
+    var trainingPlanTitle: String?
+    var blockResults: [BlockResult] = []
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -574,6 +535,7 @@ struct SavedWorkout: Codable, Identifiable {
         case zoneSeconds, roundStats, pointsOfInterest, samples
         case isCompressedArchive, archiveFileName
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
+        case trainingPlanID, trainingPlanTitle, blockResults
     }
 
     init(
@@ -612,7 +574,10 @@ struct SavedWorkout: Codable, Identifiable {
         planTitle: String? = nil,
         planTargetLow: Int? = nil,
         planTargetHigh: Int? = nil,
-        planAdherence: Double? = nil
+        planAdherence: Double? = nil,
+        trainingPlanID: UUID? = nil,
+        trainingPlanTitle: String? = nil,
+        blockResults: [BlockResult] = []
     ) {
         self.id = id
         self.profileID = profileID
@@ -650,6 +615,9 @@ struct SavedWorkout: Codable, Identifiable {
         self.planTargetLow = planTargetLow
         self.planTargetHigh = planTargetHigh
         self.planAdherence = planAdherence
+        self.trainingPlanID = trainingPlanID
+        self.trainingPlanTitle = trainingPlanTitle
+        self.blockResults = blockResults
     }
 
     init(from decoder: Decoder) throws {
@@ -691,6 +659,9 @@ struct SavedWorkout: Codable, Identifiable {
         planTargetLow = try? c.decodeIfPresent(Int.self, forKey: .planTargetLow)
         planTargetHigh = try? c.decodeIfPresent(Int.self, forKey: .planTargetHigh)
         planAdherence = try? c.decodeIfPresent(Double.self, forKey: .planAdherence)
+        trainingPlanID = try? c.decodeIfPresent(UUID.self, forKey: .trainingPlanID)
+        trainingPlanTitle = try? c.decodeIfPresent(String.self, forKey: .trainingPlanTitle)
+        blockResults = (try? c.decodeIfPresent([BlockResult].self, forKey: .blockResults)) ?? []
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

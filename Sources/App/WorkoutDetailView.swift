@@ -41,6 +41,9 @@ struct WorkoutDetailView: View {
             VStack(spacing: 20) {
                 headerSummaryCard
                 SessionRatingCard(workoutID: workout.id)
+                if !workout.blockResults.isEmpty {
+                    PlanResultsCard(workoutID: workout.id)
+                }
                 CoachReviewCard(review: CoachEngine.review(
                     workout: workoutStore.workouts.first(where: { $0.id == workout.id }) ?? workout,
                     profile: workoutStore.profile(for: workout),
@@ -726,6 +729,57 @@ struct SessionRatingCard: View {
         case 4...6: return .yellow
         case 7...8: return .orange
         default: return .red
+        }
+    }
+}
+
+
+// MARK: - Plan results
+
+struct PlanResultsCard: View {
+    @EnvironmentObject var workoutStore: WorkoutStore
+    let workoutID: UUID
+    @State private var resultURL: URL?
+
+    var body: some View {
+        if let w = workoutStore.workouts.first(where: { $0.id == workoutID }) {
+            let done = w.blockResults.filter(\.completed).count
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Label(w.trainingPlanTitle ?? "Training plan", systemImage: "list.bullet.rectangle.portrait.fill")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Text("\(done)/\(w.blockResults.count) blocks")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(done == w.blockResults.count ? .green : .orange)
+                }
+                ForEach(w.blockResults) { BlockResultRow(result: $0) }
+                Button {
+                    let profile = workoutStore.profile(for: w)
+                    let score = CoachEngine.review(workout: w, profile: profile, history: workoutStore.workouts).overall
+                    let package = SessionResultPackage(workout: w, athlete: profile, reviewScore: score)
+                    resultURL = try? PlanTransfer.writeResultFile(package)
+                } label: {
+                    Label("Send Result to Coach", systemImage: "paperplane.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .tint(.orange)
+                if !w.rpeRated {
+                    Text("Tip: rate your effort above first so your coach sees it.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+            .sheet(item: Binding(
+                get: { resultURL.map(ShareableFile.init) },
+                set: { if $0 == nil { resultURL = nil } }
+            )) { file in
+                ShareSheet(items: [file.url])
+            }
         }
     }
 }

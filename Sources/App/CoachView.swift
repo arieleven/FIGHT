@@ -61,6 +61,7 @@ struct CoachView: View {
         ScrollView {
             VStack(spacing: 16) {
                 readinessCard(report)
+                plansEntryCard
                 nextWorkoutCard(report.nextWorkout)
 
                 if let plan = CampPlanner.buildPlan(profile: workoutStore.activeProfile, workouts: workoutStore.workouts),
@@ -177,6 +178,35 @@ struct CoachView: View {
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    // MARK: Training plans
+
+    private var plansEntryCard: some View {
+        NavigationLink {
+            PlanLibraryView()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "list.bullet.rectangle.portrait.fill")
+                    .font(.title2)
+                    .foregroundStyle(.orange)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Training Plans").font(.headline)
+                    Text(workoutStore.plans.isEmpty ? "Build a session or open one from your coach"
+                         : "\(workoutStore.plans.count) plan\(workoutStore.plans.count == 1 ? "" : "s") • templates • scan a coach's QR")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Next workout

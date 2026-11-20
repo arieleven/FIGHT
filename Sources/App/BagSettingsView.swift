@@ -9,10 +9,10 @@ struct BagSettingsSheet: View {
             Form {
                 Section {
                     Picker("Callouts", selection: $prefs.mode) {
-                        ForEach(BagCoachMode.allCases) { Text($0.rawValue).tag($0) }
+                        ForEach(BagCoachMode.allCases) { Text($0.displayName).tag($0) }
                     }
                     Picker("Tempo", selection: $prefs.tempo) {
-                        ForEach(BagTempo.allCases) { Text($0.rawValue).tag($0) }
+                        ForEach(BagTempo.allCases) { Text($0.displayName).tag($0) }
                     }
                     Toggle("Number calls (1 = jab, 2 = cross…)", isOn: $prefs.numberCalls)
                 } header: {
@@ -93,79 +93,12 @@ struct BagSettingsSheet: View {
 
 struct CustomComboEditor: View {
     @Binding var prefs: BagPreferences
-    @State private var draft: [Strike] = []
-
-    private let groups: [(String, [Strike])] = [
-        ("Punches", [.jab, .cross, .leadHook, .rearHook, .leadUppercut, .rearUppercut, .leadBodyHook, .rearBodyHook]),
-        ("Kicks", [.leadTeep, .rearTeep, .leadLowKick, .rearLowKick, .leadMidKick, .rearMidKick, .leadHighKick, .rearHighKick, .switchKick]),
-        ("Knees & elbows", [.leadKnee, .rearKnee, .leadElbow, .rearElbow]),
-        ("Defence", [.slip, .roll, .check, .pivot, .block])
-    ]
 
     var body: some View {
-        List {
-            Section("Build a combo") {
-                if draft.isEmpty {
-                    Text("Tap strikes below to build a combination.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text(draft.map { $0.callout(stance: prefs.stance, numbers: prefs.numberCalls).replacingOccurrences(of: "!", with: "") }.joined(separator: " → "))
-                        .font(.headline)
-                    HStack {
-                        Button("Undo") { _ = draft.popLast() }
-                        Spacer()
-                        Button("Clear", role: .destructive) { draft.removeAll() }
-                        Spacer()
-                        Button("Save Combo") {
-                            prefs.customCombos.append(draft)
-                            draft.removeAll()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.orange)
-                    }
-                    .buttonStyle(.bordered)
-                }
-
-                ForEach(groups.indices, id: \.self) { gi in
-                    let group = groups[gi]
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(group.0).font(.caption.weight(.bold)).foregroundStyle(.secondary)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 6) {
-                            ForEach(group.1) { strike in
-                                Button {
-                                    if draft.count < 8 { draft.append(strike) }
-                                } label: {
-                                    Text(strike.shortLabel(stance: prefs.stance))
-                                        .font(.caption.weight(.semibold))
-                                        .frame(maxWidth: .infinity, minHeight: 32)
-                                }
-                                .buttonStyle(.bordered)
-                                .accessibilityLabel(strike.callout(stance: prefs.stance, numbers: false))
-                            }
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
+        ComboListEditor(combos: $prefs.customCombos, stance: prefs.stance, numbers: prefs.numberCalls)
+            .navigationTitle("My Combos")
+            .onChange(of: prefs.customCombos.count) { _, count in
+                if count == 0 { prefs.customOnly = false }
             }
-
-            Section("My combos") {
-                if prefs.customCombos.isEmpty {
-                    Text("No saved combos yet.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    ForEach(Array(prefs.customCombos.enumerated()), id: \.offset) { _, combo in
-                        Text(combo.map { $0.callout(stance: prefs.stance, numbers: prefs.numberCalls).replacingOccurrences(of: "!", with: "") }.joined(separator: " → "))
-                            .font(.subheadline)
-                    }
-                    .onDelete { offsets in
-                        prefs.customCombos.remove(atOffsets: offsets)
-                        if prefs.customCombos.isEmpty { prefs.customOnly = false }
-                    }
-                }
-            }
-        }
-        .navigationTitle("My Combos")
-        .navigationBarTitleDisplayMode(.inline)
     }
 }

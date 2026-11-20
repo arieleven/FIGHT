@@ -53,22 +53,32 @@ struct LiveWorkoutView: View {
 
                     setupCard(profile: profile)
 
+                    if let plan = session.queuedPlan, !session.isRecording {
+                        queuedPlanCard(plan, profile: profile)
+                    }
+
+                    if session.isRunningPlan && session.isRecording {
+                        PlanRunnerCard()
+                    }
+
                     heroBPMCard(currentZone: currentZone, profile: profile)
 
                     if session.selectedCategory == .lthrTest {
                         lthrFieldTestCard
                     }
 
-                    if session.bagEnabled && session.isRecording {
+                    if session.isRecording && (session.bagEnabled || planBagBlockActive) {
                         BagComboCard(audio: session.audio, round: session.currentRound,
-                                     totalRounds: session.totalBagRounds, isComplete: session.bagSessionComplete)
+                                     totalRounds: session.roundsLimit ?? session.totalBagRounds,
+                                     isComplete: session.bagSessionComplete)
                     }
 
-                    if bagAvailable && !session.isRecording {
+                    if bagAvailable && !session.isRecording && session.queuedPlan == nil {
                         bagSetupCard
                     }
 
-                    if session.selectedCategory != .lthrTest && (!session.isRecording || session.roundTimerEnabled) {
+                    if session.selectedCategory != .lthrTest && session.queuedPlan == nil
+                        && (!session.isRecording || session.roundTimerEnabled) {
                         roundBellCard
                     }
 
@@ -121,8 +131,10 @@ struct LiveWorkoutView: View {
             .onAppear {
                 session.syncFromProfile()
                 applyPending()
+                applyPlanToRun()
             }
             .onChange(of: navigation.pendingPrescription) { _, _ in applyPending() }
+            .onChange(of: navigation.planToRun) { _, _ in applyPlanToRun() }
             .onChange(of: workoutStore.activeProfileID) { _, _ in session.syncFromProfile() }
             .onChange(of: session.requestFinishPrompt) { _, wants in
                 if wants {
@@ -160,6 +172,49 @@ struct LiveWorkoutView: View {
 
     private var bagAvailable: Bool {
         session.selectedCategory != .walk && session.selectedCategory != .lthrTest && session.selectedCategory != .roadwork
+    }
+
+    private var planBagBlockActive: Bool {
+        session.isRunningPlan && !session.isInPlanTransition && !session.planComplete && session.currentBlock?.kind == .bagRounds
+    }
+
+    private func applyPlanToRun() {
+        guard let plan = navigation.planToRun, !session.isRecording else { return }
+        navigation.planToRun = nil
+        session.queue(plan)
+    }
+
+    private func queuedPlanCard(_ plan: TrainingPlan, profile: AthleteProfile) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("PLAN LOADED", systemImage: "list.bullet.rectangle.portrait.fill")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.orange)
+                Spacer()
+                Button {
+                    session.unqueuePlan()
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Remove plan")
+            }
+            Text(plan.title).font(.title3.weight(.bold))
+            Text("\(PlanFormat.totalLabel(plan.plannedSeconds)) • \(plan.blocks.count) blocks\(plan.author.isEmpty ? "" : " • by \(plan.author)")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(plan.blocks.indices, id: \.self) { i in
+                let b = plan.blocks[i]
+                HStack(spacing: 8) {
+                    Image(systemName: b.kind.icon).foregroundStyle(.orange).frame(width: 20)
+                    Text(b.title).font(.subheadline)
+                    Spacer()
+                    Text(b.summary).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(14)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func applyPending() {
@@ -277,6 +332,27 @@ struct LiveWorkoutView: View {
                     .foregroundStyle(.secondary)
             }
             if !session.isRecording {
+                if session.queuedPlan == nil {
+                    Menu {
+                        let mine = workoutStore.plans
+                        if !mine.isEmpty {
+                            Section("My Plans") {
+                                ForEach(mine) { p in
+                                    Button(p.title) { session.queue(p) }
+                                }
+                            }
+                        }
+                        Section("Templates") {
+                            ForEach(PlanTemplates.all) { p in
+                                Button(p.title) { session.queue(p) }
+                            }
+                        }
+                    } label: {
+                        Label("Load a Training Plan", systemImage: "list.bullet.rectangle.portrait")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
                 HStack {
                     Picker("Discipline", selection: $session.selectedCategory) {
                         ForEach(WorkoutCategory.allCases) { cat in
@@ -469,7 +545,7 @@ struct LiveWorkoutView: View {
             .tint(.orange)
 
             if session.bagEnabled {
-                Text("\(prefs.mode.rawValue) • \(prefs.tempo.rawValue) • \(prefs.stance.rawValue) • \(prefs.difficulty.rawValue)\(prefs.numberCalls ? " • Numbers" : "")")
+                Text("\(prefs.mode.displayName) • \(prefs.tempo.displayName) • \(prefs.stance.rawValue) • \(prefs.difficulty.rawValue)\(prefs.numberCalls ? " • Numbers" : "")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -531,7 +607,7 @@ struct LiveWorkoutView: View {
             if session.roundTimerEnabled {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(session.isRestPeriod ? "ROUND \(session.currentRound) • REST" : "ROUND \(session.currentRound)\(session.bagEnabled ? " OF \(session.totalBagRounds)" : "") • WORK")
+                        Text(session.isRestPeriod ? "ROUND \(session.currentRound) • REST" : "ROUND \(session.currentRound)\(session.roundsLimit.map { " OF \($0)" } ?? "") • WORK")
                             .font(.caption.weight(.heavy))
                             .foregroundStyle(session.isRestPeriod ? .cyan : .orange)
                         Text(formatDuration(session.isRecording ? session.phaseRemaining : session.currentPhaseTarget))
@@ -688,7 +764,7 @@ struct LiveWorkoutView: View {
                 Button {
                     session.startWorkout()
                 } label: {
-                    Label(session.selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start Workout", systemImage: "play.fill")
+                    Label(session.queuedPlan != nil ? "Start Plan" : (session.selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start Workout"), systemImage: "play.fill")
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -857,5 +933,152 @@ struct FlowLayout: Layout {
             }
             y += rowHeight + spacing
         }
+    }
+}
+
+
+// MARK: - Plan runner card
+
+struct PlanRunnerCard: View {
+    @EnvironmentObject var session: WorkoutSession
+    @EnvironmentObject var bleManager: BLEHeartRateManager
+
+    var body: some View {
+        if let plan = session.runningPlan {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label(plan.title, systemImage: "list.bullet.rectangle.portrait.fill")
+                        .font(.caption.weight(.heavy))
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                    Spacer()
+                    Text(session.planComplete ? "COMPLETE" : "Block \(min(session.planBlockIndex + 1, plan.blocks.count)) of \(plan.blocks.count)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 3) {
+                    ForEach(plan.blocks.indices, id: \.self) { i in
+                        Capsule()
+                            .fill(stripColor(i))
+                            .frame(height: 6)
+                    }
+                }
+                .accessibilityHidden(true)
+
+                if session.planComplete {
+                    Text("PLAN COMPLETE")
+                        .font(.system(.title, design: .rounded).weight(.heavy))
+                        .foregroundStyle(.green)
+                } else if let b = session.currentBlock {
+                    if session.isInPlanTransition {
+                        Text("UP NEXT")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(.cyan)
+                        Text(b.title)
+                            .font(.system(.title, design: .rounded).weight(.heavy))
+                        Text("\(b.kind.displayName) • \(b.summary)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Text("Starts in \(Int((session.planTransitionRemaining ?? 0).rounded(.up)))s")
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(.cyan)
+                            Spacer()
+                            Button("Start Now") { session.startNextBlockNow() }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.cyan)
+                        }
+                    } else {
+                        Text(b.title.uppercased())
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(.orange)
+                        if b.kind.isRoundBased {
+                            Text("Round \(session.currentRound) of \(session.roundsLimit ?? b.rounds)\(session.isRestPeriod ? " • Rest" : "")")
+                                .font(.title2.weight(.heavy))
+                        } else {
+                            Text(clock(session.blockRemaining))
+                                .font(.system(size: 52, weight: .heavy, design: .rounded))
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                            if b.kind == .strength {
+                                Text("\(b.sets) × \(b.reps) reps • tap Done when finished")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        if let range = session.activeTargetRange {
+                            targetChip(range)
+                        }
+                    }
+
+                    if !b.cue.isEmpty {
+                        Text("“\(b.cue)”")
+                            .font(.title3.weight(.semibold))
+                            .italic()
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let v = b.videoURL, let url = URL(string: v) {
+                        Link(destination: url) {
+                            Label("Watch technique", systemImage: "play.rectangle.fill")
+                                .font(.subheadline)
+                        }
+                    }
+
+                    HStack(spacing: 10) {
+                        Button("Skip") { session.finishCurrentBlock(skipped: true) }
+                            .buttonStyle(.bordered)
+                        if !session.isInPlanTransition {
+                            Button(b.kind.isRoundBased ? "+1 Round" : "+1 Min") { session.extendCurrentBlock() }
+                                .buttonStyle(.bordered)
+                            if b.kind == .strength {
+                                Button("Done") { session.finishCurrentBlock() }
+                                    .buttonStyle(.borderedProminent)
+                                    .tint(.green)
+                            }
+                        }
+                        Spacer()
+                    }
+                    .controlSize(.small)
+
+                    if !session.isInPlanTransition, let next = session.upcomingBlock {
+                        Text("Then: \(next.title) • \(next.summary)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(14)
+            .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 16))
+            .animation(.easeInOut(duration: 0.25), value: session.planBlockIndex)
+        }
+    }
+
+    private func stripColor(_ i: Int) -> Color {
+        if i < session.blockResults.count {
+            return session.blockResults[i].completed ? .green : .orange.opacity(0.6)
+        }
+        if i == session.planBlockIndex && !session.planComplete {
+            return session.isInPlanTransition ? .cyan : .orange
+        }
+        return Color.secondary.opacity(0.3)
+    }
+
+    private func targetChip(_ range: ClosedRange<Int>) -> some View {
+        let bpm = bleManager.currentBPM
+        let (text, color): (String, Color) = {
+            if bpm <= 0 { return ("Target \(range.lowerBound)–\(range.upperBound)", .secondary) }
+            if bpm < range.lowerBound { return ("Below target \(range.lowerBound)–\(range.upperBound)", .blue) }
+            if bpm > range.upperBound { return ("Above target \(range.lowerBound)–\(range.upperBound)", .orange) }
+            return ("On target \(range.lowerBound)–\(range.upperBound)", .green)
+        }()
+        return Label(text, systemImage: "heart.circle.fill")
+            .font(.subheadline.weight(.bold))
+            .foregroundStyle(color)
+    }
+
+    private func clock(_ t: TimeInterval) -> String {
+        let s = max(0, Int(t.rounded(.up)))
+        return String(format: "%d:%02d", s / 60, s % 60)
     }
 }

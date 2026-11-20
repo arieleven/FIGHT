@@ -26,6 +26,9 @@ struct WorkoutDraft: Codable {
     var planTitle: String?
     var planTargetLow: Int?
     var planTargetHigh: Int?
+    var trainingPlanID: UUID?
+    var trainingPlanTitle: String?
+    var blockResults: [BlockResult]?
 }
 
 enum WorkoutFinalizer {
@@ -88,7 +91,10 @@ enum WorkoutFinalizer {
             planTitle: d.planTitle,
             planTargetLow: d.planTargetLow,
             planTargetHigh: d.planTargetHigh,
-            planAdherence: adherence
+            planAdherence: adherence,
+            trainingPlanID: d.trainingPlanID,
+            trainingPlanTitle: d.trainingPlanTitle,
+            blockResults: d.blockResults ?? []
         )
     }
 }
@@ -150,6 +156,22 @@ final class WorkoutSession: ObservableObject {
     @Published private(set) var liveAlpha1: Double?
     @Published private(set) var pendingRecoveryRemaining: Int?
     @Published private(set) var bagSessionComplete = false
+
+    // MARK: Plan runner state
+    @Published private(set) var queuedPlan: TrainingPlan?
+    @Published private(set) var runningPlan: TrainingPlan?
+    @Published private(set) var planBlockIndex = 0
+    @Published private(set) var planBlockElapsed: TimeInterval = 0
+    @Published private(set) var planTransitionRemaining: TimeInterval?
+    @Published private(set) var planComplete = false
+    @Published private(set) var blockResults: [BlockResult] = []
+    private var blockStartElapsed: TimeInterval = 0
+    private var blockStartStrikes = 0
+    @Published private(set) var blockExtraRounds = 0
+    @Published private(set) var blockExtraSeconds = 0
+    private var roundNumberOffset = 0
+    static let transitionSeconds: TimeInterval = 15
+    static let firstBlockLeadIn: TimeInterval = 8
 
     // MARK: Flow state
     @Published var finishedWorkout: SavedWorkout?
@@ -224,6 +246,46 @@ final class WorkoutSession: ObservableObject {
     var currentPhaseTarget: TimeInterval { TimeInterval(isRestPeriod ? restDurationSeconds : workDurationSeconds) }
     var phaseRemaining: TimeInterval { max(0, currentPhaseTarget - phaseElapsed) }
     var totalBagRounds: Int { bagPrefs.estimatedTotalRounds }
+
+    var isRunningPlan: Bool { runningPlan != nil }
+    var isInPlanTransition: Bool { planTransitionRemaining != nil }
+
+    /// The block being run (or, during a transition, the one coming up).
+    var currentBlock: PlanBlock? {
+        guard let p = runningPlan, planBlockIndex < p.blocks.count else { return nil }
+        return p.blocks[planBlockIndex]
+    }
+
+    var upcomingBlock: PlanBlock? {
+        guard let p = runningPlan else { return nil }
+        let i = isInPlanTransition ? planBlockIndex : planBlockIndex + 1
+        return i < p.blocks.count ? p.blocks[i] : nil
+    }
+
+    /// Rounds in the current round-based unit: a plan block, or a bag session.
+    var roundsLimit: Int? {
+        if isRunningPlan {
+            guard let b = currentBlock, b.kind.isRoundBased, !isInPlanTransition, !planComplete else { return nil }
+            return b.rounds + blockExtraRounds
+        }
+        return bagEnabled ? totalBagRounds : nil
+    }
+
+    /// Time left in a timed (non-round) plan block.
+    var blockRemaining: TimeInterval {
+        guard let b = currentBlock, !b.kind.isRoundBased, !isInPlanTransition else { return 0 }
+        return max(0, Double(b.durationSeconds + blockExtraSeconds) - planBlockElapsed)
+    }
+
+    /// HR band to hold right now: the plan block's target, else a Coach-tab prescription.
+    var activeTargetRange: ClosedRange<Int>? {
+        if isRunningPlan {
+            guard !isInPlanTransition, !planComplete, let t = currentBlock?.target else { return nil }
+            return t.bpmRange(for: profile)
+        }
+        if let p = activePlan { return p.targetLowBPM...max(p.targetLowBPM, p.targetHighBPM) }
+        return nil
+    }
 
     // MARK: Setup changes
 
@@ -304,6 +366,180 @@ final class WorkoutSession: ObservableObject {
         activePlan = p
     }
 
+    // MARK: Training plans
+
+    /// Loads a plan to run on the next Start.
+    func queue(_ plan: TrainingPlan) {
+        guard !isRecording else { return }
+        suppressDefaults = true
+        selectedCategory = plan.category
+        suppressDefaults = false
+        bagEnabled = false
+        activePlan = nil
+        queuedPlan = plan
+    }
+
+    func unqueuePlan() {
+        guard !isRecording else { return }
+        queuedPlan = nil
+    }
+
+    private func prefs(for block: PlanBlock) -> BagPreferences {
+        var p = bagPrefs // keeps the fighter's stance, call style, level and strike toggles
+        p.tempo = block.tempo
+        p.workSeconds = block.workSeconds
+        p.restSeconds = block.restSeconds
+        if block.combos.isEmpty {
+            p.customOnly = false
+        } else {
+            p.customCombos = block.combos
+            p.customOnly = true
+        }
+        return p
+    }
+
+    private func beginTransition(to index: Int, seconds: TimeInterval) {
+        guard let plan = runningPlan, index < plan.blocks.count else { return }
+        audio.stopBagCoach()
+        roundTimerEnabled = false
+        isRestPeriod = false
+        phaseElapsed = 0
+        planBlockIndex = index
+        planBlockElapsed = 0
+        planTransitionRemaining = seconds
+        let b = plan.blocks[index]
+        let lead = index == 0 ? "First up: " : "Next up: "
+        audio.announceCoachingCue(lead + b.spokenIntro + (b.cue.isEmpty ? "" : " \(b.cue)"), enabled: true)
+    }
+
+    private func startBlock(_ index: Int) {
+        guard let plan = runningPlan, index < plan.blocks.count else { return }
+        let b = plan.blocks[index]
+        planBlockIndex = index
+        planBlockElapsed = 0
+        planTransitionRemaining = nil
+        blockExtraRounds = 0
+        blockExtraSeconds = 0
+        blockStartElapsed = elapsedSeconds
+        blockStartStrikes = audio.strikesCuedCount
+        roundNumberOffset = completedRounds.count
+        pendingRecovery = nil
+        pendingRecoveryRemaining = nil
+
+        if b.kind.isRoundBased {
+            roundTimerEnabled = true
+            workDurationSeconds = b.workSeconds
+            restDurationSeconds = b.restSeconds
+            currentRound = 1
+            isRestPeriod = false
+            phaseElapsed = 0
+            currentRoundStartElapsed = elapsedSeconds
+            currentWorkEndElapsed = 0
+            currentRoundStartStrikes = audio.strikesCuedCount
+            roundEndPeakBPM = 0
+        } else {
+            roundTimerEnabled = false
+            isRestPeriod = false
+            phaseElapsed = 0
+        }
+        audio.playRoundStartBell()
+        if b.kind == .bagRounds {
+            startBagCoach(prefs: prefs(for: b))
+        } else {
+            audio.stopBagCoach()
+        }
+        saveDraft()
+    }
+
+    private func appendResult(for b: PlanBlock, completed: Bool, start: TimeInterval) {
+        let blockSamples = samples.filter { $0.elapsedSeconds >= start }
+        let bpms = blockSamples.map(\.bpm)
+        var inTarget: Double?
+        if let t = b.target, !bpms.isEmpty {
+            let r = t.bpmRange(for: profile)
+            inTarget = Double(bpms.filter { r.contains($0) }.count) / Double(bpms.count)
+        }
+        blockResults.append(BlockResult(
+            blockID: b.id, title: b.title, kind: b.kind, plannedSeconds: b.plannedSeconds,
+            startElapsed: start, endElapsed: elapsedSeconds, completed: completed,
+            avgBPM: bpms.isEmpty ? nil : bpms.reduce(0, +) / bpms.count,
+            peakBPM: bpms.max(), timeInTarget: inTarget, targetLabel: b.target?.label,
+            roundsCompleted: b.kind.isRoundBased ? max(0, completedRounds.count - roundNumberOffset) : nil,
+            strikesCalled: max(0, audio.strikesCuedCount - blockStartStrikes)
+        ))
+    }
+
+    /// Ends the running block (naturally, via "Done", or skipped) and moves on.
+    func finishCurrentBlock(skipped: Bool = false) {
+        guard isRecording, let plan = runningPlan, !planComplete else { return }
+        if isInPlanTransition {
+            // Skipping the block that was about to start.
+            if let b = currentBlock {
+                blockStartStrikes = audio.strikesCuedCount
+                roundNumberOffset = completedRounds.count
+                appendResult(for: b, completed: false, start: elapsedSeconds)
+            }
+        } else if let b = currentBlock {
+            if b.kind.isRoundBased && skipped && !isRestPeriod {
+                currentWorkEndElapsed = elapsedSeconds
+                recordRound(stoolDrop: nil)
+            }
+            appendResult(for: b, completed: !skipped, start: blockStartElapsed)
+            audio.flushCombos()
+            if !b.kind.isRoundBased || skipped { audio.playRoundEndBell() }
+        }
+        audio.stopBagCoach()
+        roundTimerEnabled = false
+        isRestPeriod = false
+        pendingRecovery = nil
+        pendingRecoveryRemaining = nil
+
+        let next = planBlockIndex + 1
+        if next < plan.blocks.count {
+            beginTransition(to: next, seconds: Self.transitionSeconds)
+        } else {
+            planTransitionRemaining = nil
+            planComplete = true
+            audio.announceCoachingCue("Plan complete. Great work.", enabled: true)
+            requestFinishPrompt = true
+        }
+        saveDraft()
+    }
+
+    func startNextBlockNow() {
+        guard isInPlanTransition else { return }
+        startBlock(planBlockIndex)
+    }
+
+    /// +1 round for round blocks, +1 minute for timed blocks.
+    func extendCurrentBlock() {
+        guard let b = currentBlock, !isInPlanTransition, !planComplete else { return }
+        if b.kind.isRoundBased { blockExtraRounds += 1 } else { blockExtraSeconds += 60 }
+    }
+
+    private func advancePlan(by dt: TimeInterval) {
+        if let t = planTransitionRemaining {
+            let after = t - dt
+            if t > 3 && after <= 3 && profile.audioCoach.clapperWarnings { audio.playClapper() }
+            if after <= 0 {
+                startBlock(planBlockIndex)
+            } else {
+                planTransitionRemaining = after
+            }
+            return
+        }
+        guard let b = currentBlock, !b.kind.isRoundBased else { return }
+        planBlockElapsed += dt
+        let total = Double(b.durationSeconds + blockExtraSeconds)
+        let before = total - (planBlockElapsed - dt)
+        let after = total - planBlockElapsed
+        if total > 30 && before > 10 && after <= 10 && profile.audioCoach.clapperWarnings { audio.playClapper() }
+        if total >= 240 && before > total / 2 && after <= total / 2 {
+            audio.announceCoachingCue("Halfway.", enabled: true)
+        }
+        if after <= 0 { finishCurrentBlock() }
+    }
+
     // MARK: Start / stop
 
     func startWorkout() {
@@ -342,6 +578,16 @@ final class WorkoutSession: ObservableObject {
         requestFinishPrompt = false
         liveAlpha1 = nil
         audio.strikesCuedCount = 0
+        runningPlan = queuedPlan
+        queuedPlan = nil
+        planBlockIndex = 0
+        planBlockElapsed = 0
+        planTransitionRemaining = nil
+        planComplete = false
+        blockResults = []
+        blockExtraRounds = 0
+        blockExtraSeconds = 0
+        roundNumberOffset = 0
         _ = ble?.consumeLatestRRIntervals()
 
         let now = Date()
@@ -352,12 +598,17 @@ final class WorkoutSession: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = true
 
         audio.prepareForWorkout(settings: profile.audioCoach)
-        if roundTimerEnabled || bagEnabled {
-            audio.playRoundStartBell()
-        }
-        if bagEnabled {
-            if totalBagRounds == 1 { announceFinalRound() }
-            startBagCoach()
+        if isRunningPlan {
+            bagEnabled = false
+            beginTransition(to: 0, seconds: Self.firstBlockLeadIn)
+        } else {
+            if roundTimerEnabled || bagEnabled {
+                audio.playRoundStartBell()
+            }
+            if bagEnabled {
+                if totalBagRounds == 1 { announceFinalRound() }
+                startBagCoach()
+            }
         }
         startLiveActivity()
 
@@ -369,11 +620,12 @@ final class WorkoutSession: ObservableObject {
         saveDraft()
     }
 
-    private func startBagCoach() {
+    private func startBagCoach(prefs override: BagPreferences? = nil) {
         let context = BagLoopContext(
             isWorkPhase: { [weak self] in
                 guard let self else { return false }
-                return self.isRecording && !self.bagSessionComplete && (!self.roundTimerEnabled || !self.isRestPeriod)
+                return self.isRecording && !self.bagSessionComplete && !self.isInPlanTransition && !self.planComplete
+                    && (!self.roundTimerEnabled || !self.isRestPeriod)
             },
             roundProgress: { [weak self] in
                 guard let self, self.roundTimerEnabled, self.workDurationSeconds > 0 else { return 0.5 }
@@ -384,15 +636,15 @@ final class WorkoutSession: ObservableObject {
                 return Double(self.workDurationSeconds) - self.livePhaseElapsed
             },
             hrBandStatus: { [weak self] in
-                guard let self, let plan = self.activePlan else { return 0 }
+                guard let self, let range = self.activeTargetRange else { return 0 }
                 let bpm = self.currentBPM
                 if bpm <= 0 { return 0 }
-                if bpm < plan.targetLowBPM { return -1 }
-                if bpm > plan.targetHighBPM { return 1 }
+                if bpm < range.lowerBound { return -1 }
+                if bpm > range.upperBound { return 1 }
                 return 0
             }
         )
-        audio.startBagCoach(prefs: bagPrefs, context: context)
+        audio.startBagCoach(prefs: override ?? bagPrefs, context: context)
     }
 
     /// Phase time including the fraction since the last 1-s tick (smooth countdowns).
@@ -412,6 +664,13 @@ final class WorkoutSession: ObservableObject {
 
     func finishAndSave() {
         guard isRecording, let store else { return }
+        if isRunningPlan && !planComplete, let b = currentBlock {
+            if isInPlanTransition {
+                // Remaining blocks were never started.
+            } else {
+                appendResult(for: b, completed: false, start: blockStartElapsed)
+            }
+        }
         let end = Date()
         let draft = makeDraft(now: end)
         stopRecordingCommon()
@@ -443,6 +702,7 @@ final class WorkoutSession: ObservableObject {
         finishedWorkout = saved
         workoutNotes = ""
         activePlan = nil
+        resetPlanState()
         showingSummary = true
     }
 
@@ -454,6 +714,17 @@ final class WorkoutSession: ObservableObject {
         completedRounds.removeAll()
         elapsedSeconds = 0
         liveAlpha1 = nil
+        resetPlanState()
+    }
+
+    private func resetPlanState() {
+        runningPlan = nil
+        planComplete = false
+        planTransitionRemaining = nil
+        planBlockIndex = 0
+        planBlockElapsed = 0
+        blockResults = []
+        roundNumberOffset = 0
     }
 
     // MARK: Tick
@@ -495,8 +766,11 @@ final class WorkoutSession: ObservableObject {
             }
         }
 
-        if roundTimerEnabled && !bagSessionComplete {
+        if roundTimerEnabled && !bagSessionComplete && !isInPlanTransition {
             advanceRoundClock(by: dt, bpm: bpm, coachCfg: coachCfg)
+        }
+        if isRunningPlan && !planComplete {
+            advancePlan(by: dt)
         }
 
         if selectedCategory == .lthrTest {
@@ -557,9 +831,12 @@ final class WorkoutSession: ObservableObject {
         audio.flushCombos()
         audio.playRoundEndBell()
 
-        let isFinalBagRound = bagEnabled && currentRound >= totalBagRounds
-        if isFinalBagRound {
+        if let limit = roundsLimit, currentRound >= limit {
             recordRound(stoolDrop: nil)
+            if isRunningPlan {
+                finishCurrentBlock()
+                return
+            }
             bagSessionComplete = true
             audio.stopBagCoach()
             audio.announceCoachingCue("Session complete. Great work.", enabled: true)
@@ -588,8 +865,12 @@ final class WorkoutSession: ObservableObject {
         currentRoundStartStrikes = audio.strikesCuedCount
         roundEndPeakBPM = 0
         audio.playRoundStartBell()
-        if bagEnabled && currentRound == totalBagRounds {
-            announceFinalRound()
+        if let limit = roundsLimit, currentRound == limit, limit > 1 {
+            if isRunningPlan {
+                audio.announceCoachingCue("Last round.", enabled: true)
+            } else {
+                announceFinalRound()
+            }
         }
     }
 
@@ -605,7 +886,7 @@ final class WorkoutSession: ObservableObject {
         let avg = roundSamples.isEmpty ? currentBPM : roundSamples.map(\.bpm).reduce(0, +) / roundSamples.count
         let peak = roundSamples.map(\.bpm).max() ?? roundEndPeakBPM
         completedRounds.append(RoundStat(
-            roundNumber: currentRound,
+            roundNumber: roundNumberOffset + currentRound,
             startElapsed: currentRoundStartElapsed,
             endElapsed: workEnd,
             avgBPM: avg,
@@ -700,11 +981,18 @@ final class WorkoutSession: ObservableObject {
     }
 
     private func evaluatePlan(bpm: Int, coachCfg: AudioCoachSettings) {
-        guard let plan = activePlan, coachCfg.masterEnabled, elapsedSeconds > 90,
+        let settle: TimeInterval = isRunningPlan ? 45 : 90
+        guard let range = activeTargetRange, coachCfg.masterEnabled,
+              elapsedSeconds - (isRunningPlan ? blockStartElapsed : 0) > settle,
               elapsedSeconds - lastPlanAlertTime >= 75,
-              bpm > plan.targetHighBPM + 4, !(roundTimerEnabled && isRestPeriod) else { return }
-        lastPlanAlertTime = elapsedSeconds
-        audio.announceCoachingCue("Above plan target. Ease back under \(plan.targetHighBPM).", enabled: true)
+              !(roundTimerEnabled && isRestPeriod) else { return }
+        if bpm > range.upperBound + 4 {
+            lastPlanAlertTime = elapsedSeconds
+            audio.announceCoachingCue("Above target. Ease back under \(range.upperBound).", enabled: true)
+        } else if isRunningPlan, let b = currentBlock, b.kind == .steady || b.kind == .timedDrill, bpm < range.lowerBound - 6 {
+            lastPlanAlertTime = elapsedSeconds
+            audio.announceCoachingCue("Below target. Pick it up to \(range.lowerBound).", enabled: true)
+        }
     }
 
     // MARK: Live Activity (throttled)
@@ -728,7 +1016,7 @@ final class WorkoutSession: ObservableObject {
         guard let activity = currentActivity else { return }
         let bpm = currentBPM
         let z = profile.zone(for: bpm)
-        let key = (bpm: bpm, zone: z.number, round: currentRound, rest: isRestPeriod)
+        let key = (bpm: bpm, zone: z.number, round: currentRound * 100 + planBlockIndex, rest: isRestPeriod || isInPlanTransition)
         let now = Date()
         if let last = lastActivityState,
            last.zone == key.zone, last.round == key.round, last.rest == key.rest,
@@ -739,8 +1027,11 @@ final class WorkoutSession: ObservableObject {
         lastActivityPush = now
         let state = WorkoutActivityAttributes.ContentState(
             currentBPM: bpm, zoneNumber: z.number, zoneShortName: z.shortName, calories: Int(activeCalories),
-            workoutStartDate: startTime ?? now, isTimedRound: roundTimerEnabled, roundNumber: currentRound,
-            isRest: isRestPeriod, phaseEndDate: now.addingTimeInterval(phaseRemaining)
+            workoutStartDate: startTime ?? now,
+            isTimedRound: roundTimerEnabled || (isRunningPlan && !isInPlanTransition && !(currentBlock?.kind.isRoundBased ?? true)),
+            roundNumber: isRunningPlan ? planBlockIndex + 1 : currentRound,
+            isRest: isRestPeriod || isInPlanTransition,
+            phaseEndDate: now.addingTimeInterval(isInPlanTransition ? (planTransitionRemaining ?? 0) : (roundTimerEnabled ? phaseRemaining : blockRemaining))
         )
         Task { await activity.update(.init(state: state, staleDate: nil)) }
     }
@@ -767,7 +1058,9 @@ final class WorkoutSession: ObservableObject {
             samples: samples, zoneSeconds: zoneSeconds, activeCalories: activeCalories, bmrCalories: bmrCalories,
             rounds: completedRounds, autoHRREvents: autoHRREvents, strikesCued: audio.strikesCuedCount,
             ghostTitle: selectedGhost?.title, planTitle: activePlan?.title,
-            planTargetLow: activePlan?.targetLowBPM, planTargetHigh: activePlan?.targetHighBPM
+            planTargetLow: activePlan?.targetLowBPM, planTargetHigh: activePlan?.targetHighBPM,
+            trainingPlanID: runningPlan?.id, trainingPlanTitle: runningPlan?.title,
+            blockResults: blockResults
         )
     }
 

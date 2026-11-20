@@ -39,6 +39,25 @@ struct FightApp: App {
             .task {
                 session.bind(ble: bleManager, store: workoutStore, health: healthKit)
             }
+            .onOpenURL { url in
+                navigation.handleOpenURL(url)
+            }
+            .sheet(item: $navigation.incomingPlan) { plan in
+                PlanImportSheet(plan: plan)
+                    .environmentObject(workoutStore)
+                    .environmentObject(navigation)
+            }
+            .sheet(item: $navigation.incomingResult) { result in
+                ResultViewerSheet(result: result)
+            }
+            .alert("Couldn't open plan", isPresented: Binding(
+                get: { navigation.importError != nil },
+                set: { if !$0 { navigation.importError = nil } }
+            )) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(navigation.importError ?? "")
+            }
             .preferredColorScheme(.dark)
         }
     }

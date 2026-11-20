@@ -13,6 +13,7 @@ final class WorkoutStore: ObservableObject {
     @Published var savedGhostSessions: [GhostSession] = []
     @Published var readinessReadings: [ReadinessReading] = []
     @Published var weighIns: [WeighIn] = []
+    @Published var plans: [TrainingPlan] = []
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
     private var cachedGhosts: [GhostSession] = []
 
@@ -84,6 +85,7 @@ final class WorkoutStore: ObservableObject {
         refreshGhostCache()
         loadReadiness()
         loadWeighIns()
+        loadPlans()
     }
 
     private struct ProfileContainer: Codable {
@@ -463,6 +465,51 @@ final class WorkoutStore: ObservableObject {
     func deleteReadiness(_ reading: ReadinessReading) {
         readinessReadings.removeAll { $0.id == reading.id }
         saveReadiness()
+    }
+
+    // MARK: - Training plans
+
+    var plansFileURL: URL {
+        let dir = documentsDirectory.appendingPathComponent("Plans", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("plans.json")
+    }
+
+    private func loadPlans() {
+        guard let data = try? Data(contentsOf: plansFileURL),
+              let list = try? PlanTransfer.decoder.decode([TrainingPlan].self, from: data) else { return }
+        plans = list
+    }
+
+    private func savePlans() {
+        if let data = try? PlanTransfer.encoder(pretty: true).encode(plans) {
+            try? data.write(to: plansFileURL, options: .atomic)
+        }
+    }
+
+    /// Adds or updates a plan (matched by id).
+    func upsertPlan(_ plan: TrainingPlan) {
+        if let i = plans.firstIndex(where: { $0.id == plan.id }) {
+            plans[i] = plan
+        } else {
+            plans.insert(plan, at: 0)
+        }
+        savePlans()
+    }
+
+    func deletePlan(_ plan: TrainingPlan) {
+        plans.removeAll { $0.id == plan.id }
+        savePlans()
+    }
+
+    func movePlans(from source: IndexSet, to destination: Int) {
+        plans.move(fromOffsets: source, toOffset: destination)
+        savePlans()
+    }
+
+    /// Plan workouts recorded for a given plan, newest first.
+    func workouts(forPlan id: UUID) -> [SavedWorkout] {
+        workouts.filter { $0.trainingPlanID == id }
     }
 
     // MARK: - Weigh-ins
