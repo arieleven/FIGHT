@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct LiveWorkoutView: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var healthKit: HealthKitManager
     @StateObject private var audioCoach = AudioCoachEngine()
 
     @State private var selectedCategory: WorkoutCategory = .muayThai
@@ -1106,6 +1107,12 @@ struct LiveWorkoutView: View {
         )
 
         workoutStore.save(saved)
+        if healthKit.autoSaveEnabled {
+            let hkSamples = saved.samples
+            Task {
+                await healthKit.save(workout: saved, samples: hkSamples)
+            }
+        }
         finishedWorkout = saved
         workoutNotes = ""
         showingPostWorkoutSummary = true

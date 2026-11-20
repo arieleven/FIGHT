@@ -3,7 +3,9 @@ import Charts
 
 struct WorkoutDetailView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var healthKit: HealthKitManager
     let workout: SavedWorkout
+    @State private var isSavingToHealth = false
 
     @State private var selectedElapsed: Double?
     @State private var loadedSamples: [HeartRatePoint] = []
@@ -57,6 +59,26 @@ struct WorkoutDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if healthKit.isAvailable {
+                    Button {
+                        guard !healthKit.isSaved(workout), !isSavingToHealth else { return }
+                        isSavingToHealth = true
+                        let samplesForHealth = loadedSamples
+                        Task {
+                            await healthKit.save(workout: workout, samples: samplesForHealth)
+                            isSavingToHealth = false
+                        }
+                    } label: {
+                        if isSavingToHealth {
+                            ProgressView()
+                        } else {
+                            Image(systemName: healthKit.isSaved(workout) ? "heart.text.square.fill" : "heart.text.square")
+                                .foregroundStyle(healthKit.isSaved(workout) ? .pink : .primary)
+                        }
+                    }
+                    .accessibilityLabel(healthKit.isSaved(workout) ? "Saved to Apple Health" : "Save to Apple Health")
+                }
+
                 Button {
                     showingComparison = true
                 } label: {

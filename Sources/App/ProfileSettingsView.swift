@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ProfileSettingsView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var healthKit: HealthKitManager
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
 
@@ -232,6 +233,38 @@ struct ProfileSettingsView: View {
                             Text("Every 3 min").tag(3)
                             Text("Every 5 min").tag(5)
                         }
+                    }
+                }
+
+                Section("Apple Health") {
+                    if healthKit.isAvailable {
+                        HStack {
+                            Label(healthKit.isAuthorized ? "Connected" : "Not Connected",
+                                  systemImage: healthKit.isAuthorized ? "heart.fill" : "heart.slash")
+                                .foregroundStyle(healthKit.isAuthorized ? .pink : .secondary)
+                            Spacer()
+                            if !healthKit.isAuthorized {
+                                Button("Connect") {
+                                    Task { await healthKit.requestAuthorization() }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.pink)
+                                .controlSize(.small)
+                            }
+                        }
+                        Toggle("Auto-save workouts to Health", isOn: $healthKit.autoSaveEnabled)
+                            .tint(.pink)
+                        Text("Saves each finished session as a Health workout with its full heart-rate trace and active calories. Past workouts can be sent from their detail screen.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !healthKit.statusMessage.isEmpty {
+                            Text(healthKit.statusMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text("Apple Health isn't available on this device.")
+                            .foregroundStyle(.secondary)
                     }
                 }
 

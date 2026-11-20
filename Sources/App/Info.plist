@@ -28,6 +28,10 @@
 	<string>CoospoTracker connects to your CooSpo chest or arm heart rate monitor via Bluetooth Low Energy to track live BPM and R-R intervals.</string>
 	<key>NSBluetoothPeripheralUsageDescription</key>
 	<string>CoospoTracker connects to your CooSpo heart rate strap via Bluetooth.</string>
+	<key>NSHealthShareUsageDescription</key>
+	<string>CoospoTracker checks which workouts it has already saved to Apple Health.</string>
+	<key>NSHealthUpdateUsageDescription</key>
+	<string>CoospoTracker saves your finished workouts, heart rate and active calories to Apple Health.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

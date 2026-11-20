@@ -4,6 +4,7 @@ import SwiftUI
 struct CoospoTrackerApp: App {
     @StateObject private var bleManager = BLEHeartRateManager()
     @StateObject private var workoutStore = WorkoutStore()
+    @StateObject private var healthKit = HealthKitManager()
 
     var body: some Scene {
         WindowGroup {
@@ -25,6 +26,7 @@ struct CoospoTrackerApp: App {
             }
             .environmentObject(bleManager)
             .environmentObject(workoutStore)
+            .environmentObject(healthKit)
             .preferredColorScheme(.dark)
         }
     }
