@@ -96,11 +96,14 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var manualZones: ZoneThresholds = ZoneThresholds(z1Max: 125, z2Max: 145, z3Max: 162, z4Max: 178)
     var campPhase: CampPhase = .fightCamp
     var audioCoach: AudioCoachSettings = AudioCoachSettings()
+    var fightDate: Date? = nil
+    var campLengthWeeks: Int = 8
 
     enum CodingKeys: String, CodingKey {
         case id, name, sex, age, weightKg, heightCm, targetFightWeightKg
         case restingHR, useAutoMaxHR, maxHR, lactateThresholdHR, zoneMethod
         case manualZones, campPhase, audioCoach
+        case fightDate, campLengthWeeks
     }
 
     init() {}
@@ -122,6 +125,8 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         manualZones = try c.decodeIfPresent(ZoneThresholds.self, forKey: .manualZones) ?? ZoneThresholds(z1Max: 125, z2Max: 145, z3Max: 162, z4Max: 178)
         campPhase = try c.decodeIfPresent(CampPhase.self, forKey: .campPhase) ?? .fightCamp
         audioCoach = try c.decodeIfPresent(AudioCoachSettings.self, forKey: .audioCoach) ?? AudioCoachSettings()
+        fightDate = try c.decodeIfPresent(Date.self, forKey: .fightDate)
+        campLengthWeeks = try c.decodeIfPresent(Int.self, forKey: .campLengthWeeks) ?? 8
     }
 
     mutating func sanitize() {
@@ -130,6 +135,7 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         heightCm = min(max(heightCm, 120.0), 240.0)
         targetFightWeightKg = min(max(targetFightWeightKg, 35.0), 200.0)
         restingHR = min(max(restingHR, 30), 110)
+        campLengthWeeks = min(max(campLengthWeeks, 4), 16)
         let tanaka = Int(round(208.0 - 0.7 * Double(age)))
         if useAutoMaxHR {
             maxHR = tanaka

@@ -12,6 +12,7 @@ final class WorkoutStore: ObservableObject {
     }
     @Published var savedGhostSessions: [GhostSession] = []
     @Published var readinessReadings: [ReadinessReading] = []
+    @Published var weighIns: [WeighIn] = []
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
     private var cachedGhosts: [GhostSession] = []
 
@@ -84,6 +85,7 @@ final class WorkoutStore: ObservableObject {
         runLosslessAutoCompression()
         refreshGhostCache()
         loadReadiness()
+        loadWeighIns()
     }
 
     private struct ProfileContainer: Codable {
@@ -448,6 +450,54 @@ final class WorkoutStore: ObservableObject {
     func deleteReadiness(_ reading: ReadinessReading) {
         readinessReadings.removeAll { $0.id == reading.id }
         saveReadiness()
+    }
+
+    // MARK: - Weigh-ins
+
+    var weighInsFileURL: URL {
+        let dir = documentsDirectory.appendingPathComponent("WeightCut", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("weigh_ins.json")
+    }
+
+    private func loadWeighIns() {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: weighInsFileURL),
+              let list = try? decoder.decode([WeighIn].self, from: data) else { return }
+        weighIns = list.sorted { $0.date > $1.date }
+    }
+
+    private func saveWeighIns() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(weighIns) {
+            try? data.write(to: weighInsFileURL, options: .atomic)
+        }
+    }
+
+    func addWeighIn(_ entry: WeighIn) {
+        weighIns.append(entry)
+        weighIns.sort { $0.date > $1.date }
+        saveWeighIns()
+        syncProfileWeight(profileID: entry.profileID)
+    }
+
+    func deleteWeighIn(_ entry: WeighIn) {
+        weighIns.removeAll { $0.id == entry.id }
+        saveWeighIns()
+    }
+
+    /// Keeps the profile's body weight (used for calories and EPOC) equal to the newest weigh-in.
+    private func syncProfileWeight(profileID: UUID) {
+        guard let newest = weighIns.first(where: { $0.profileID == profileID }),
+              let idx = profiles.firstIndex(where: { $0.id == profileID }) else { return }
+        var p = profiles[idx]
+        p.weightKg = newest.weightKg
+        p.sanitize()
+        profiles[idx] = p
+        saveProfilesToDisk()
     }
 
     func profile(for workout: SavedWorkout) -> AthleteProfile {

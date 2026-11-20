@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 final class AppNavigation: ObservableObject {
     enum Tab: Hashable {
-        case live, coach, history, profile
+        case live, coach, camp, history, profile
     }
 
     @Published var selectedTab: Tab = .live

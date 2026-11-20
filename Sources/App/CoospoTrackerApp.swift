@@ -18,6 +18,10 @@ struct CoospoTrackerApp: App {
                     .tabItem { Label("Coach", systemImage: "gauge.with.dots.needle.67percent") }
                     .tag(AppNavigation.Tab.coach)
 
+                CampView()
+                    .tabItem { Label("Camp", systemImage: "calendar.badge.clock") }
+                    .tag(AppNavigation.Tab.camp)
+
                 HistoryListView()
                     .tabItem { Label("History", systemImage: "list.bullet.clipboard") }
                     .tag(AppNavigation.Tab.history)

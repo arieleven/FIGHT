@@ -61,6 +61,34 @@ struct CoachView: View {
                 readinessCard(report)
                 nextWorkoutCard(report.nextWorkout)
 
+                if let plan = CampPlanner.buildPlan(profile: workoutStore.activeProfile, workouts: workoutStore.workouts),
+                   let week = plan.currentWeek {
+                    Button {
+                        navigation.selectedTab = .camp
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "calendar.badge.clock")
+                                .font(.title3)
+                                .foregroundStyle(week.phase.color)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(week.title) of \(plan.weeks.count)")
+                                    .font(.subheadline.weight(.bold))
+                                Text("Load \(Int(week.actualLoad)) / \(Int(week.targetLoad)) • \(week.actualSessions)/\(week.targetSessions) sessions")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens your fight camp plan")
+                }
+
                 if report.hasEnoughData {
                     fightFitnessSection(report)
                     loadChartCard(report)
