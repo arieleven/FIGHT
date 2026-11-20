@@ -15,6 +15,7 @@ struct CampView: View {
     @State private var reportURL: URL?
     @State private var isGeneratingReport = false
     @State private var reportError: String?
+    @State private var showingWarmUp = false
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -28,6 +29,10 @@ struct CampView: View {
 
                     if let plan, let week = plan.currentWeek {
                         currentWeekCard(week, plan: plan, profile: profile, detailed: false)
+                    }
+
+                    if plan?.currentWeek?.isFightWeek == true {
+                        fightNightCard
                     }
 
                     if let days = weight.daysToFight, (0...3).contains(days) {
@@ -44,6 +49,9 @@ struct CampView: View {
                         bodySignalsCard
                         if let plan {
                             planCard(plan)
+                        }
+                        if let comparison = CampCompare.compare(profile: profile, workouts: workoutStore.workouts, weighIns: workoutStore.weighIns) {
+                            CampCompareCard(comparison: comparison)
                         }
                         reminderCard
                         reportCard
@@ -64,6 +72,9 @@ struct CampView: View {
             .sheet(isPresented: $showingFightSetup) {
                 FightSetupSheet()
             }
+            .sheet(isPresented: $showingWarmUp) {
+                FightNightWarmUpSheet()
+            }
             .sheet(isPresented: $showingWeighIn) {
                 WeighInSheet()
                     .presentationDetents([.medium, .large])
@@ -80,6 +91,32 @@ struct CampView: View {
                 Text(reportError ?? "")
             }
         }
+    }
+
+    // MARK: Fight night
+
+    private var fightNightCard: some View {
+        Button {
+            showingWarmUp = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "figure.boxing")
+                    .font(.title2)
+                    .foregroundStyle(.red)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Fight-Night Warm-Up").font(.headline)
+                    Text("Set your walkout time and get a warm-up that finishes right on it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .card(tint: .red)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: Fight header

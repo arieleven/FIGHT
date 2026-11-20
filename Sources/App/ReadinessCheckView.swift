@@ -17,6 +17,7 @@ struct ReadinessCheckView: View {
     @State private var timer: Timer?
     @State private var sleepQuality = 3
     @State private var soreness = 2
+    @State private var soreRegions: Set<BodyRegion> = []
     @State private var result: ReadinessReading?
     @State private var showingDeviceSheet = false
 
@@ -210,6 +211,12 @@ struct ReadinessCheckView: View {
                     Text("Very").tag(5)
                 }
                 .pickerStyle(.segmented)
+                if soreness >= 3 {
+                    Text("Where? (optional)")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.top, 4)
+                    SorenessRegionPicker(selection: $soreRegions)
+                }
             }
 
             Button {
@@ -361,6 +368,12 @@ struct ReadinessCheckView: View {
             soreness: soreness
         )
         workoutStore.addReadiness(reading)
+        if soreness >= 3 {
+            let severity = soreness >= 5 ? 3 : 2
+            workoutStore.addSoreness(soreRegions.map {
+                SorenessEntry(profileID: workoutStore.activeProfileID, region: $0, severity: severity)
+            })
+        }
         result = reading
         phase = .result
     }

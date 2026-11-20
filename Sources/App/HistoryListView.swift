@@ -7,6 +7,7 @@ struct HistoryListView: View {
     @State private var showingComparison = false
     @State private var backupURL: URL?
     @State private var backupFailed = false
+    @State private var showingRecords = false
 
     private var filteredWorkouts: [SavedWorkout] {
         workoutStore.workouts.filter { w in
@@ -58,6 +59,11 @@ struct HistoryListView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button {
+                            showingRecords = true
+                        } label: {
+                            Label("Records & Badges", systemImage: "trophy")
+                        }
+                        Button {
                             showingComparison = true
                         } label: {
                             Label("Compare Sessions", systemImage: "square.stack.3d.up")
@@ -87,6 +93,9 @@ struct HistoryListView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text("The backup archive couldn't be created. Try again.")
+            }
+            .navigationDestination(isPresented: $showingRecords) {
+                RecordsView()
             }
             .sheet(isPresented: $showingComparison) {
                 ComparisonView(initialBaselineWorkout: workoutStore.workouts.first)

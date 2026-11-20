@@ -13,9 +13,9 @@ final class HeadMotionTracker: ObservableObject {
     private var aboveThreshold = false
 
     /// Rotation speed (rad/s) that counts as a deliberate head movement, not a breath or a nod.
-    static let threshold = 2.2
+    nonisolated static let threshold = 2.2
     /// Minimum time between two counted movements.
-    static let refractory = 0.35
+    nonisolated static let refractory = 0.35
 
     var isAvailable: Bool { manager.isDeviceMotionAvailable }
 

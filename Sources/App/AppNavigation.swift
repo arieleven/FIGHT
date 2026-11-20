@@ -7,7 +7,12 @@ final class AppNavigation: ObservableObject {
         case live, coach, camp, history, profile
     }
 
+    /// The app's navigation, for Siri and Shortcuts.
+    static weak var shared: AppNavigation?
+
     @Published var selectedTab: Tab = .live
+    /// Set by the "Readiness check" shortcut; the Coach tab opens the check.
+    @Published var requestReadinessCheck = false
     @Published var pendingPrescription: WorkoutPrescription?
 
     /// A plan opened from a file, link or QR code, waiting for the import preview.

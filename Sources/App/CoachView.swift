@@ -11,6 +11,10 @@ struct CoachView: View {
     @State private var selectedMetric: MetricScore?
     @State private var showingReadinessCheck = false
     @State private var showingLoadInfo = false
+    @State private var insights = CoachInsights()
+    @State private var showingBreathing = false
+    @State private var showingSoreness = false
+    @State private var shareImage: ShareableImage?
 
     var body: some View {
         NavigationStack {
@@ -31,7 +35,18 @@ struct CoachView: View {
                         Label("Readiness Check", systemImage: "heart.text.square")
                     }
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button { showingBreathing = true } label: { Label("Breathing Trainer", systemImage: "wind") }
+                        Button { showingSoreness = true } label: { Label("Log Soreness", systemImage: "bandage") }
+                    } label: {
+                        Label("Tools", systemImage: "ellipsis.circle")
+                    }
+                }
             }
+            .sheet(isPresented: $showingBreathing) { BreathingTrainerView() }
+            .sheet(isPresented: $showingSoreness, onDismiss: refresh) { SorenessLogSheet() }
+            .sheet(item: $shareImage) { item in ShareSheet(items: [item.image]) }
             .sheet(item: $selectedMetric) { metric in
                 MetricDetailSheet(metric: metric)
                     .presentationDetents([.medium, .large])
@@ -39,9 +54,14 @@ struct CoachView: View {
             .sheet(isPresented: $showingReadinessCheck) {
                 ReadinessCheckView()
             }
-            .onAppear(perform: refresh)
+            .onAppear {
+                refresh()
+                consumeReadinessRequest()
+            }
+            .onChange(of: navigation.requestReadinessCheck) { _, _ in consumeReadinessRequest() }
             .onChange(of: workoutStore.workouts.count) { _, _ in refresh() }
             .onChange(of: workoutStore.readinessReadings.count) { _, _ in refresh() }
+            .onChange(of: workoutStore.soreness.count) { _, _ in refresh() }
             .onChange(of: workoutStore.activeProfileID) { _, _ in refresh() }
             .refreshable { refresh() }
         }
@@ -54,6 +74,22 @@ struct CoachView: View {
             profile: workoutStore.activeProfile,
             resolveSamples: { workoutStore.resolvedSamples(for: $0) }
         )
+        insights = CoachInsights.build(store: workoutStore)
+    }
+
+    private func consumeReadinessRequest() {
+        guard navigation.requestReadinessCheck else { return }
+        navigation.requestReadinessCheck = false
+        showingReadinessCheck = true
+    }
+
+    private func shareFighterCard(_ report: CoachReport) {
+        let profile = workoutStore.activeProfile
+        let records = Records.all(workouts: workoutStore.workouts, profile: profile).count
+        if let image = FighterCardView.render(name: profile.name, report: report, gasTank: insights.gasTank?.headline,
+                                              fightDate: profile.fightDate, recordCount: records) {
+            shareImage = ShareableImage(image: image)
+        }
     }
 
     @ViewBuilder
@@ -103,17 +139,22 @@ struct CoachView: View {
                     .padding(.vertical)
                 }
 
-                if let tip = report.recommendations.first {
+                let tips = insights.priorityTips + report.recommendations + insights.extraTips
+                if let tip = tips.first {
                     recommendationsSection([tip], title: "Coach's Tip")
                 }
 
-                AdvancedSection("Performance details", subtitle: "All ratings, training load, notes, thresholds", key: "coach.details") {
+                AdvancedSection("Performance details", subtitle: "Ratings, gas tank, combo cost, benchmark, what drives you", key: "coach.details") {
                     if report.hasEnoughData {
                         fightFitnessSection(report)
                         loadChartCard(report)
                     }
-                    if report.recommendations.count > 1 {
-                        recommendationsSection(Array(report.recommendations.dropFirst()), title: "More Notes")
+                    if let g = insights.gasTank { GasTankCard(result: g) }
+                    BenchmarkCard(attempts: insights.benchmarkAttempts) { navigation.run(PlanTemplates.benchmark) }
+                    if let c = insights.comboCost { ComboCostCard(result: c) }
+                    driversSection
+                    if tips.count > 1 {
+                        recommendationsSection(Array(tips.dropFirst()), title: "More Notes")
                     }
                     thresholdsCard(report)
                 }
@@ -268,6 +309,21 @@ struct CoachView: View {
 
     // MARK: Fight fitness
 
+    @ViewBuilder
+    private var driversSection: some View {
+        let drivers = insights.drivers + insights.sorenessPatterns
+        if !drivers.isEmpty {
+            DriversCard(title: "What Drives Your Performance", insights: drivers)
+        }
+        if let b = insights.breathing {
+            let diff = Int((b.with - b.without).rounded())
+            DriversCard(title: "Stool Breathing", insights: [DriverInsight(
+                icon: "wind", title: diff >= 0 ? "Breathing tones help you recover" : "No recovery gain from breathing tones yet",
+                detail: "Average recovery between rounds: \(Int(b.with)) BPM with tones vs \(Int(b.without)) BPM without (\(b.sessions) sessions).",
+                strength: 0)])
+        }
+    }
+
     private func fightFitnessSummary(_ report: CoachReport) -> some View {
         HStack(spacing: 14) {
             ScoreRing(score: report.fightFitness, color: MetricScore.color(for: report.fightFitness), lineWidth: 7)
@@ -283,11 +339,24 @@ struct CoachView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
+                if let g = insights.gasTank {
+                    GasTankLine(result: g)
+                        .padding(.top, 2)
+                }
             }
             Spacer(minLength: 0)
+            Button {
+                shareFighterCard(report)
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Share fighter card")
         }
         .card()
-        .accessibilityElement(children: .combine)
     }
 
     private func fightFitnessSection(_ report: CoachReport) -> some View {

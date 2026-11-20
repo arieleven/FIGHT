@@ -36,9 +36,35 @@ struct WorkoutDetailView: View {
         return chartSamples.min(by: { abs($0.elapsedSeconds - target) < abs($1.elapsedSeconds - target) })
     }
 
+    private func headMovementCard(_ perMinute: Double) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Head Movement", systemImage: "airpodspro")
+                .font(.title3.weight(.bold))
+            Text(String(format: "%.0f movements per minute of work", perMinute))
+                .font(.subheadline.weight(.semibold))
+            let rounds = workout.roundStats.filter { $0.headMoves != nil }
+            if !rounds.isEmpty {
+                Chart(rounds) { r in
+                    BarMark(x: .value("Round", "R\(r.roundNumber)"), y: .value("Moves", r.headMoves ?? 0))
+                        .foregroundStyle(.teal.gradient)
+                }
+                .frame(height: 120)
+            }
+            Text("Slips, rolls and pulls counted by your AirPods. If it drops in later rounds, you're getting tired and standing still in front of your opponent.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .card()
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                let newRecords = Records.newRecords(in: workout, workouts: workoutStore.workouts,
+                                                    profile: workoutStore.profile(for: workout))
+                if !newRecords.isEmpty {
+                    NewRecordsBanner(records: newRecords)
+                }
                 headerSummaryCard
                 SessionRatingCard(workoutID: workout.id)
                 if !workout.blockResults.isEmpty {
@@ -65,6 +91,13 @@ struct WorkoutDetailView: View {
                     }
                     if !workout.autoHRREvents.isEmpty {
                         autoHRRSection
+                    }
+                    if let cost = ComboCost.analyze(workouts: [workout], stance: workoutStore.profile(for: workout).bagPreferences.stance,
+                                                    resolveSamples: { _ in loadedSamples }) {
+                        ComboCostCard(result: cost)
+                    }
+                    if let hm = workout.headMovesPerMinute {
+                        headMovementCard(hm)
                     }
                     calorieBreakdownCard
                     advancedMetricsGrid

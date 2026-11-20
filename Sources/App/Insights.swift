@@ -402,6 +402,18 @@ struct CampComparison {
 }
 
 enum CampCompare {
+    /// When a fighter sets a new fight date after a fight has passed, keep the
+    /// finished camp so the next one can be compared against it.
+    static func archiveFinishedCamp(old: AthleteProfile, new: inout AthleteProfile, now: Date = Date()) {
+        guard let oldFight = old.fightDate, oldFight < now, new.fightDate != oldFight else { return }
+        let record = CampRecord(fightDate: oldFight, campLengthWeeks: old.campLengthWeeks)
+        if !new.campHistory.contains(record) {
+            new.campHistory.append(record)
+            new.campHistory.sort { $0.fightDate < $1.fightDate }
+            if new.campHistory.count > 10 { new.campHistory.removeFirst(new.campHistory.count - 10) }
+        }
+    }
+
     static func compare(profile: AthleteProfile, workouts: [SavedWorkout], weighIns: [WeighIn], now: Date = Date()) -> CampComparison? {
         guard let previous = profile.campHistory.last,
               let current = CampPlanner.buildPlan(profile: profile, workouts: workouts, now: now) else { return nil }
@@ -648,5 +660,31 @@ enum SorenessInsights {
         }
         return CoachRecommendation(kind: .warning, title: "Protect your \(worst.region.rawValue.lowercased())",
                                    detail: "You logged it as \(worst.severity >= 3 ? "painful" : "sore"). \(advice) See a physio if it's sharp or lasts beyond a week.")
+    }
+}
+
+// MARK: - Breathing effect
+
+enum BreathingEffect {
+    /// Average between-round recovery with stool breathing tones vs without.
+    static func compare(_ workouts: [SavedWorkout], profileID: UUID) -> (with: Double, without: Double, sessions: Int)? {
+        let mine = workouts.filter { $0.profileID == profileID }
+        let with = mine.filter(\.breathingGuided).compactMap(\.avgInterRoundDrop).map(Double.init)
+        let without = mine.filter { !$0.breathingGuided }.compactMap(\.avgInterRoundDrop).map(Double.init)
+        guard with.count >= 2, without.count >= 3, let a = mean(with), let b = mean(without) else { return nil }
+        return (a, b, with.count)
+    }
+
+    /// Coherence 0–100 from the swing in beat-to-beat heart rate. Slow, paced
+    /// breathing makes heart rate rise and fall with each breath; a bigger, steadier
+    /// swing means you're breathing in sync with your heart (more parasympathetic).
+    static func coherence(rrMs: [Double]) -> Int? {
+        let clean = rrMs.filter { $0 > 300 && $0 < 2000 }
+        guard clean.count >= 15 else { return nil }
+        let hr = clean.map { 60000 / $0 }.sorted()
+        let p10 = hr[Int(Double(hr.count - 1) * 0.1)]
+        let p90 = hr[Int(Double(hr.count - 1) * 0.9)]
+        let swing = p90 - p10
+        return Int(min(100, max(0, (swing - 3) / 12 * 100)).rounded())
     }
 }

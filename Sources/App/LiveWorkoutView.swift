@@ -55,6 +55,15 @@ struct LiveWorkoutView: View {
                     if session.isRecording {
                         heroBPMCard(currentZone: currentZone, profile: profile)
 
+                        if let record = session.liveRecordBanner {
+                            Label(record, systemImage: "trophy.fill")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.orange)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(Color.orange.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                        }
+
                         if session.isRunningPlan {
                             PlanRunnerCard()
                         }

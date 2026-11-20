@@ -37,6 +37,7 @@ struct FightApp: App {
             .environmentObject(navigation)
             .environmentObject(session)
             .task {
+                AppNavigation.shared = navigation
                 session.bind(ble: bleManager, store: workoutStore, health: healthKit)
             }
             .onOpenURL { url in

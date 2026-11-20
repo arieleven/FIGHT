@@ -31,7 +31,7 @@ final class WorkoutStore: ObservableObject {
             var clean = newValue
             clean.sanitize()
             if let old = profiles.first(where: { $0.id == clean.id }) {
-                Self.archiveFinishedCamp(old: old, new: &clean)
+                CampCompare.archiveFinishedCamp(old: old, new: &clean)
             }
             if let idx = profiles.firstIndex(where: { $0.id == clean.id }) {
                 profiles[idx] = clean
@@ -91,18 +91,6 @@ final class WorkoutStore: ObservableObject {
         loadWeighIns()
         loadPlans()
         loadSoreness()
-    }
-
-    /// When a fighter sets a new fight date after a fight has passed, keep the
-    /// finished camp so the next one can be compared against it.
-    static func archiveFinishedCamp(old: AthleteProfile, new: inout AthleteProfile, now: Date = Date()) {
-        guard let oldFight = old.fightDate, oldFight < now, new.fightDate != oldFight else { return }
-        let record = CampRecord(fightDate: oldFight, campLengthWeeks: old.campLengthWeeks)
-        if !new.campHistory.contains(record) {
-            new.campHistory.append(record)
-            new.campHistory.sort { $0.fightDate < $1.fightDate }
-            if new.campHistory.count > 10 { new.campHistory.removeFirst(new.campHistory.count - 10) }
-        }
     }
 
     private struct ProfileContainer: Codable {

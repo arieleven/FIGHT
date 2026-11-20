@@ -288,6 +288,15 @@ struct ProfileSettingsView: View {
                     }
                 }
 
+                Section {
+                    Toggle("Count head movement (AirPods)", isOn: binding(for: \.trackHeadMovement))
+                    Toggle("Breathing tones between rounds", isOn: binding(for: \.guidedBreathing))
+                } header: {
+                    Text("Sensors & Recovery")
+                } footer: {
+                    Text("Head movement works with AirPods Pro, AirPods (3rd gen and later) and AirPods Max. Breathing tones guide a slow in-4, out-6 breath on the stool.")
+                }
+
                 Section("Storage") {
                     HStack {
                         Text("Fighter Profiles File")

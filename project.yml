@@ -69,6 +69,8 @@ targets:
       - path: Sources/App/CampPlanner.swift
       - path: Sources/App/BagCoach.swift
       - path: Sources/App/PlanSupport.swift
+      - path: Sources/App/Insights.swift
+      - path: Sources/App/HeadMotionTracker.swift
       - path: Sources/PlanKit
     settings:
       base:
