@@ -237,14 +237,14 @@ struct WorkoutDetailView: View {
                         y: .value("BPM", stat.peakBPM)
                     )
                     .foregroundStyle(by: .value("Metric", "Peak BPM"))
-                    .symbol(Circle())
+                    .symbol(.circle)
 
                     LineMark(
                         x: .value("Round", "R\(stat.roundNumber)"),
                         y: .value("BPM", stat.avgBPM)
                     )
                     .foregroundStyle(by: .value("Metric", "Avg BPM"))
-                    .symbol(Square())
+                    .symbol(.square)
 
                     if let drop = stat.stoolDropBPM {
                         BarMark(

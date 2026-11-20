@@ -13,6 +13,15 @@ struct ProfileSettingsView: View {
     var body: some View {
         let profile = workoutStore.activeProfile
         let zones = profile.activeZones
+        let minLTHR = profile.restingHR + 25
+        let maxLTHR = max(minLTHR, profile.effectiveMaxHR - 3)
+        let z1Upper = max(80, zones.z2Max - 5)
+        let z2Lower = zones.z1Max + 5
+        let z2Upper = max(z2Lower, zones.z3Max - 5)
+        let z3Lower = zones.z2Max + 5
+        let z3Upper = max(z3Lower, zones.z4Max - 5)
+        let z4Lower = zones.z3Max + 5
+        let z4Upper = max(z4Lower, profile.effectiveMaxHR - 5)
 
         NavigationStack {
             Form {
@@ -81,7 +90,8 @@ struct ProfileSettingsView: View {
                     Toggle("Auto Max HR (Tanaka: \(Int(round(208.0 - 0.7 * Double(profile.age)))))", isOn: binding(for: \.useAutoMaxHR))
 
                     if !profile.useAutoMaxHR {
-                        Stepper("Custom Max HR: \(profile.maxHR) BPM", value: binding(for: \.maxHR), in: (profile.restingHR + 35)...230)
+                        let minMaxHR = profile.restingHR + 35
+                        Stepper("Custom Max HR: \(profile.maxHR) BPM", value: binding(for: \.maxHR), in: minMaxHR...max(minMaxHR, 230))
                     }
                 }
 
@@ -136,14 +146,14 @@ struct ProfileSettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if profile.zoneMethod == .lactateThreshold {
-                        Stepper("Lactate Threshold (LTHR): \(profile.lactateThresholdHR) BPM", value: binding(for: \.lactateThresholdHR), in: (profile.restingHR + 25)...(profile.effectiveMaxHR - 3))
+                        Stepper("Lactate Threshold (LTHR): \(profile.lactateThresholdHR) BPM", value: binding(for: \.lactateThresholdHR), in: minLTHR...maxLTHR)
                     }
 
                     if profile.zoneMethod == .manual {
-                        Stepper("Z1 Ceiling: \(zones.z1Max) BPM", value: binding(for: \.manualZones.z1Max), in: 80...(zones.z2Max - 5))
-                        Stepper("Z2 Ceiling: \(zones.z2Max) BPM", value: binding(for: \.manualZones.z2Max), in: (zones.z1Max + 5)...(zones.z3Max - 5))
-                        Stepper("Z3 Ceiling: \(zones.z3Max) BPM", value: binding(for: \.manualZones.z3Max), in: (zones.z2Max + 5)...(zones.z4Max - 5))
-                        Stepper("Z4 Ceiling: \(zones.z4Max) BPM", value: binding(for: \.manualZones.z4Max), in: (zones.z3Max + 5)...(profile.effectiveMaxHR - 5))
+                        Stepper("Z1 Ceiling: \(zones.z1Max) BPM", value: binding(for: \.manualZones.z1Max), in: 80...z1Upper)
+                        Stepper("Z2 Ceiling: \(zones.z2Max) BPM", value: binding(for: \.manualZones.z2Max), in: z2Lower...z2Upper)
+                        Stepper("Z3 Ceiling: \(zones.z3Max) BPM", value: binding(for: \.manualZones.z3Max), in: z3Lower...z3Upper)
+                        Stepper("Z4 Ceiling: \(zones.z4Max) BPM", value: binding(for: \.manualZones.z4Max), in: z4Lower...z4Upper)
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
