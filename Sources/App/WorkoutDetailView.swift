@@ -39,6 +39,11 @@ struct WorkoutDetailView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSummaryCard
+                CoachReviewCard(review: CoachEngine.review(
+                    workout: workout,
+                    profile: workoutStore.profile(for: workout),
+                    history: workoutStore.workouts
+                ))
                 calorieBreakdownCard
                 interactiveChartCard
                 if !workout.pointsOfInterest.isEmpty {

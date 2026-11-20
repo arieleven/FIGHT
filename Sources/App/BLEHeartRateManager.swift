@@ -155,6 +155,10 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
                 }
                 offset += 2
             }
+            // Nothing drains the buffer while idle, so keep only the last ~5 minutes.
+            if latestRRBuffer.count > 600 {
+                latestRRBuffer.removeFirst(latestRRBuffer.count - 600)
+            }
         }
     }
 }

@@ -8,6 +8,8 @@ struct LiveWorkoutView: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var healthKit: HealthKitManager
+    @EnvironmentObject var navigation: AppNavigation
+    @ScaledMetric(relativeTo: .largeTitle) private var heroBPMSize: CGFloat = 74
     @StateObject private var audioCoach = AudioCoachEngine()
 
     @State private var selectedCategory: WorkoutCategory = .muayThai
@@ -63,6 +65,12 @@ struct LiveWorkoutView: View {
 
     @State private var currentActivity: Activity<WorkoutActivityAttributes>?
 
+    @State private var activePlan: WorkoutPrescription?
+    @State private var suppressCategoryDefaults = false
+    @State private var lastPlanAlertTime: TimeInterval = -999
+    @State private var showingFinishConfirm = false
+    @State private var liveAlpha1: Double?
+
     @State private var showingDeviceSheet = false
     @State private var showingPostWorkoutSummary = false
     @State private var finishedWorkout: SavedWorkout?
@@ -75,6 +83,19 @@ struct LiveWorkoutView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     connectionBanner
+
+                    if bleManager.isConnected && bleManager.sensorContactDetected == false {
+                        Label("Poor sensor contact — tighten the band or moisten the sensor", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                    }
+
+                    if let plan = activePlan {
+                        planBanner(plan)
+                    }
 
                     if let lthr = lthrTestResultBanner {
                         lthrSuccessBanner(lthr: lthr)
@@ -112,6 +133,10 @@ struct LiveWorkoutView: View {
                                 }
                                 .pickerStyle(.menu)
                                 .onChange(of: selectedCategory) { _, newCat in
+                                    if suppressCategoryDefaults {
+                                        suppressCategoryDefaults = false
+                                        return
+                                    }
                                     applyDisciplineDefaults(newCat)
                                 }
 
@@ -145,15 +170,17 @@ struct LiveWorkoutView: View {
                         lthrFieldTestCard
                     }
 
-                    if selectedCategory != .walk && selectedCategory != .lthrTest {
+                    if selectedCategory != .walk && selectedCategory != .lthrTest && (!isRecording || bagConfig.enabled) {
                         guidedBagCoachCard
                     }
 
-                    if selectedCategory != .lthrTest {
+                    if selectedCategory != .lthrTest && (!isRecording || roundTimerEnabled) {
                         roundBellCard
                     }
 
-                    ghostSimulatorCard
+                    if !isRecording || selectedGhost != nil {
+                        ghostSimulatorCard
+                    }
 
                     liveSparklineCard
 
@@ -173,7 +200,20 @@ struct LiveWorkoutView: View {
             }
             .sheet(isPresented: $showingDeviceSheet) {
                 DeviceScannerSheet()
+                    .presentationDetents([.medium, .large])
             }
+            .confirmationDialog("Finish workout?", isPresented: $showingFinishConfirm, titleVisibility: .visible) {
+                Button("Save Workout") { finishAndSaveWorkout() }
+                Button("Discard Workout", role: .destructive) { discardWorkout() }
+                Button("Keep Going", role: .cancel) {}
+            } message: {
+                Text("\(formatDuration(elapsedSeconds)) recorded")
+            }
+            .onAppear { applyPendingPrescription() }
+            .onChange(of: navigation.pendingPrescription) { _, _ in applyPendingPrescription() }
+            .sensoryFeedback(.impact(weight: .heavy), trigger: currentRound)
+            .sensoryFeedback(.warning, trigger: isRestPeriod)
+            .sensoryFeedback(.start, trigger: isRecording)
             .sheet(isPresented: $showingPostWorkoutSummary) {
                 if let workout = finishedWorkout {
                     NavigationStack {
@@ -277,16 +317,32 @@ struct LiveWorkoutView: View {
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Image(systemName: "heart.fill")
-                    .font(.system(size: 32))
+                    .font(.system(size: heroBPMSize * 0.43))
                     .foregroundStyle(bleManager.currentBPM > 0 ? currentZone.color : .secondary)
+                    .symbolEffect(.pulse, isActive: bleManager.currentBPM > 0)
 
                 Text(bleManager.currentBPM > 0 ? "\(bleManager.currentBPM)" : "--")
-                    .font(.system(size: 74, weight: .heavy, design: .rounded))
+                    .font(.system(size: heroBPMSize, weight: .heavy, design: .rounded))
                     .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.default, value: bleManager.currentBPM)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
 
                 Text("BPM")
                     .font(.title3.weight(.bold))
                     .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(bleManager.currentBPM > 0 ? "Heart rate \(bleManager.currentBPM) beats per minute, \(currentZone.name)" : "No heart rate signal")
+
+            zoneBar(bpm: bleManager.currentBPM, profile: workoutStore.activeProfile)
+
+            if isRecording, let a = liveAlpha1 {
+                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
+                      systemImage: "waveform.path.ecg")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(a >= 0.75 ? .green : .orange)
             }
 
             HStack(spacing: 12) {
@@ -552,16 +608,23 @@ struct LiveWorkoutView: View {
                     if !isRecording {
                         VStack(alignment: .trailing, spacing: 6) {
                             Picker("Work", selection: $workDurationSeconds) {
+                                Text("0:30 Work").tag(30)
+                                Text("1:00 Work").tag(60)
+                                Text("1:30 Work").tag(90)
                                 Text("2:00 Work").tag(120)
                                 Text("3:00 Work").tag(180)
+                                Text("4:00 Work").tag(240)
                                 Text("5:00 Work").tag(300)
                             }
                             .pickerStyle(.menu)
 
                             Picker("Rest", selection: $restDurationSeconds) {
+                                Text("0:15 Rest").tag(15)
                                 Text("0:30 Rest").tag(30)
                                 Text("0:45 Rest").tag(45)
                                 Text("1:00 Rest").tag(60)
+                                Text("1:30 Rest").tag(90)
+                                Text("2:00 Rest").tag(120)
                             }
                             .pickerStyle(.menu)
                         }
@@ -732,7 +795,7 @@ struct LiveWorkoutView: View {
                 }
 
                 Button(role: .destructive) {
-                    finishAndSaveWorkout()
+                    showingFinishConfirm = true
                 } label: {
                     Label("Finish & Save Workout", systemImage: "stop.fill")
                         .font(.headline)
@@ -780,6 +843,9 @@ struct LiveWorkoutView: View {
         announced10sWarning = false
         audioCoach.strikesCuedCount = 0
         audioCoach.prepareForWorkout()
+        _ = bleManager.consumeLatestRRIntervals()
+        liveAlpha1 = nil
+        lastPlanAlertTime = -999
 
         startTime = Date()
         isRecording = true
@@ -840,6 +906,17 @@ struct LiveWorkoutView: View {
 
             evaluateAutomaticHRR(bpm: bpm, profile: profile)
             evaluateLiveAudioCoaching(bpm: bpm, zone: z, profile: profile, coachCfg: coachCfg)
+
+            if let plan = activePlan, coachCfg.masterEnabled, elapsedSeconds > 90,
+               elapsedSeconds - lastPlanAlertTime >= 75,
+               bpm > plan.targetHighBPM + 4, !(roundTimerEnabled && isRestPeriod) {
+                lastPlanAlertTime = elapsedSeconds
+                audioCoach.announceCoachingCue("Above plan target. Ease back under \(plan.targetHighBPM).", enabled: true)
+            }
+
+            if Int(elapsedSeconds) % 10 == 0 && samples.count >= 60 {
+                liveAlpha1 = HRVMath.liveAlpha1(recentSamples: Array(samples.suffix(150)))
+            }
         }
 
         if roundTimerEnabled {
@@ -1114,6 +1191,7 @@ struct LiveWorkoutView: View {
             }
         }
         finishedWorkout = saved
+        activePlan = nil
         workoutNotes = ""
         showingPostWorkoutSummary = true
     }
@@ -1175,6 +1253,104 @@ struct LiveWorkoutView: View {
             await activity.end(nil, dismissalPolicy: .immediate)
             currentActivity = nil
         }
+    }
+
+    private func applyPendingPrescription() {
+        guard let p = navigation.pendingPrescription, !isRecording else { return }
+        navigation.pendingPrescription = nil
+        if selectedCategory != p.category {
+            suppressCategoryDefaults = true
+            selectedCategory = p.category
+        }
+        selectedDrillTag = p.drillTag
+        bagConfig.workSeconds = p.workSeconds
+        bagConfig.restSeconds = p.restSeconds
+        bagConfig.tempo = p.bagTempo
+        let totals = [10, 15, 20, 30, 45, 60]
+        bagConfig.totalMinutes = totals.min(by: { abs($0 - p.durationMinutes) < abs($1 - p.durationMinutes) }) ?? 30
+        let noBagCategories: [WorkoutCategory] = [.walk, .roadwork, .lthrTest]
+        let bagAllowed = !noBagCategories.contains(p.category)
+        bagConfig.enabled = p.useBagCoach && bagAllowed
+        roundTimerEnabled = p.roundTimer
+        workDurationSeconds = p.workSeconds
+        restDurationSeconds = p.restSeconds
+        activePlan = p
+    }
+
+    private func discardWorkout() {
+        timer?.invalidate()
+        timer = nil
+        audioCoach.stopBagCoachLoop()
+        audioCoach.shutdownAudio()
+        isRecording = false
+        UIApplication.shared.isIdleTimerDisabled = false
+        endLiveActivity()
+        samples.removeAll()
+        elapsedSeconds = 0
+        liveAlpha1 = nil
+        completedRounds.removeAll()
+    }
+
+    private func planBanner(_ p: WorkoutPrescription) -> some View {
+        let bpm = bleManager.currentBPM
+        let status: (text: String, color: Color)
+        if bpm <= 0 {
+            status = ("Waiting for HR", Color.secondary)
+        } else if bpm < p.targetLowBPM {
+            status = ("Below target", Color.blue)
+        } else if bpm > p.targetHighBPM {
+            status = ("Above target", Color.orange)
+        } else {
+            status = ("On target", Color.green)
+        }
+        return HStack(spacing: 10) {
+            Image(systemName: "list.clipboard.fill")
+                .foregroundStyle(.green)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Coach plan: \(p.title)")
+                    .font(.subheadline.weight(.bold))
+                Text("\(p.structure) • \(p.targetLowBPM)–\(p.targetHighBPM) BPM")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            if isRecording {
+                Text(status.text)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(status.color)
+            } else {
+                Button {
+                    activePlan = nil
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Remove coach plan")
+            }
+        }
+        .padding(12)
+        .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func zoneBar(bpm: Int, profile: AthleteProfile) -> some View {
+        let current = bpm > 0 ? profile.zone(for: bpm).number : 0
+        let colors: [Color] = [.blue, .green, .yellow, .orange, .red]
+        return HStack(spacing: 4) {
+            ForEach(1...5, id: \.self) { z in
+                VStack(spacing: 3) {
+                    Capsule()
+                        .fill(colors[z - 1].opacity(z == current ? 1 : 0.25))
+                        .frame(height: z == current ? 10 : 6)
+                    Text("Z\(z)")
+                        .font(.caption2.weight(z == current ? .heavy : .regular))
+                        .foregroundStyle(z == current ? colors[z - 1] : Color.secondary)
+                }
+            }
+        }
+        .animation(.easeInOut(duration: 0.3), value: current)
+        .accessibilityHidden(true)
     }
 
     private func formatDuration(_ seconds: TimeInterval) -> String {

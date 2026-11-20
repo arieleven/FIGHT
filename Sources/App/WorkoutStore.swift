@@ -11,6 +11,7 @@ final class WorkoutStore: ObservableObject {
         }
     }
     @Published var savedGhostSessions: [GhostSession] = []
+    @Published var readinessReadings: [ReadinessReading] = []
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
     private var cachedGhosts: [GhostSession] = []
 
@@ -82,6 +83,7 @@ final class WorkoutStore: ObservableObject {
         loadExternalGhosts()
         runLosslessAutoCompression()
         refreshGhostCache()
+        loadReadiness()
     }
 
     private struct ProfileContainer: Codable {
@@ -410,6 +412,46 @@ final class WorkoutStore: ObservableObject {
          .replacingOccurrences(of: "<", with: "&lt;")
          .replacingOccurrences(of: ">", with: "&gt;")
          .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    // MARK: - Readiness checks
+
+    var readinessFileURL: URL {
+        let dir = documentsDirectory.appendingPathComponent("Readiness", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("readiness_checks.json")
+    }
+
+    private func loadReadiness() {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: readinessFileURL),
+              let list = try? decoder.decode([ReadinessReading].self, from: data) else { return }
+        readinessReadings = list.sorted { $0.date > $1.date }
+    }
+
+    private func saveReadiness() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let data = try? encoder.encode(readinessReadings) {
+            try? data.write(to: readinessFileURL, options: .atomic)
+        }
+    }
+
+    func addReadiness(_ reading: ReadinessReading) {
+        readinessReadings.insert(reading, at: 0)
+        readinessReadings.sort { $0.date > $1.date }
+        saveReadiness()
+    }
+
+    func deleteReadiness(_ reading: ReadinessReading) {
+        readinessReadings.removeAll { $0.id == reading.id }
+        saveReadiness()
+    }
+
+    func profile(for workout: SavedWorkout) -> AthleteProfile {
+        profiles.first { $0.id == workout.profileID } ?? activeProfile
     }
 
     var savedStorageBytes: Int64 {

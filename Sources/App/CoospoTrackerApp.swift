@@ -5,28 +5,31 @@ struct CoospoTrackerApp: App {
     @StateObject private var bleManager = BLEHeartRateManager()
     @StateObject private var workoutStore = WorkoutStore()
     @StateObject private var healthKit = HealthKitManager()
+    @StateObject private var navigation = AppNavigation()
 
     var body: some Scene {
         WindowGroup {
-            TabView {
+            TabView(selection: $navigation.selectedTab) {
                 LiveWorkoutView()
-                    .tabItem {
-                        Label("Live", systemImage: "heart.fill")
-                    }
+                    .tabItem { Label("Live", systemImage: "heart.fill") }
+                    .tag(AppNavigation.Tab.live)
+
+                CoachView()
+                    .tabItem { Label("Coach", systemImage: "gauge.with.dots.needle.67percent") }
+                    .tag(AppNavigation.Tab.coach)
 
                 HistoryListView()
-                    .tabItem {
-                        Label("History", systemImage: "list.bullet.clipboard")
-                    }
+                    .tabItem { Label("History", systemImage: "list.bullet.clipboard") }
+                    .tag(AppNavigation.Tab.history)
 
                 ProfileSettingsView()
-                    .tabItem {
-                        Label("Fighter", systemImage: "person.crop.circle")
-                    }
+                    .tabItem { Label("Fighter", systemImage: "person.crop.circle") }
+                    .tag(AppNavigation.Tab.profile)
             }
             .environmentObject(bleManager)
             .environmentObject(workoutStore)
             .environmentObject(healthKit)
+            .environmentObject(navigation)
             .preferredColorScheme(.dark)
         }
     }
