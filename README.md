@@ -82,6 +82,17 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Auto-detects a new max HR** and prompts you to update your zones
 - **2-minute morning readiness check**: resting HR plus HRV (RMSSD), with artifact correction. You can also import resting HR from Apple Health (e.g. Apple Watch)
 
+### 📋 Training plans: from coach to fighter
+- **Plan builder**: stack blocks into a session:
+  - Bag rounds, restricted to the combos the coach chooses (e.g. *only 1-2s and low kicks*)
+  - Intervals, timed drills (jump rope, shadowboxing, pads), steady cardio, strength sets, and rest
+  - Each block can carry an HR target, a spoken coaching cue, and a technique video link
+- **Targets in zones, not BPM**: one plan works for a whole team, because every fighter's phone converts "Zones 2–3" to *their* heart rate. Combos follow each fighter's stance automatically.
+- **Guided runner**: "Up next" announcements between blocks, a big countdown, the coach's cue read aloud, a live on-target indicator, and Skip / +1 round / +1 min / Done controls
+- **Share without accounts or servers**: send a `.fightplan` file (AirDrop, Messages, WhatsApp), a link, or a **QR code** your fighters scan in the gym. Resending an updated plan updates it on their phone.
+- **Results back to the coach**: per-block completion, HR, time in target, rounds and strikes, plus RPE and notes, sent as a `.fightresult` file the coach can open in FIGHT
+- **Templates**: *1-2 & Low Kick Sharpening*, *Fight-Pace Rounds*, *Muay Thai Clinch Day*, *Conditioning Circuit*, and *Technique + Roadwork*
+
 ### 📅 Fight Camp: plan, cut, report
 - **Periodization planner**: set the fight date and camp length (4–16 weeks) to get weekly load targets, deload weeks, key sessions and intensity mix per phase, tracked against what you actually did
 - **Weight-cut tracker**: daily weigh-ins (or imported from a smart scale via Apple Health), trend, required rate per week, projected fight-night weight, urine-colour hydration logging, and kg or lb
@@ -182,9 +193,10 @@ FIGHT/
 ├── Config/
 │   └── FIGHT.entitlements          # HealthKit
 ├── .github/workflows/build.yml     # Cloud build → IPA
-├── Tests/FIGHTTests/               # Unit tests (HRV, coach, camp, combos)
+├── Tests/FIGHTTests/               # Unit tests (HRV, coach, camp, combos, plans)
 ├── docs/                           # Methodology, logo and banner
 └── Sources/
+    ├── PlanKit/                    # Shared plan format: strikes, plans, results, file/link/QR transfer
     ├── App/
     │   ├── FightApp.swift              # Tab shell and dependency injection
     │   ├── BLEHeartRateManager.swift   # Universal BLE Heart Rate Profile, RR, device info, auto-reconnect
@@ -200,6 +212,8 @@ FIGHT/
     │   ├── CampPlanner.swift           # Periodization and weight-cut analysis
     │   ├── CampView.swift              # Fight Camp tab
     │   ├── WeeklyReport.swift          # PDF report rendering
+    │   ├── PlanViews.swift             # Plan library, builder, sharing, QR scan, import, results
+    │   ├── PlanSupport.swift           # Per-fighter zone resolution, result packaging
     │   ├── HealthKitManager.swift      # Apple Health workout export
     │   ├── WorkoutStore.swift          # On-device persistence, archives, TCX import/export
     │   ├── Models.swift                # Profiles, zones, sessions, physiology formulas
@@ -216,6 +230,7 @@ FIGHT/
 
 ## Roadmap
 
+- [ ] **FIGHT Coach**: a companion app for coaches (roster, plan assignment, compliance), built on the shared `PlanKit` format
 - [ ] Sparring-partner tagging: HR cost and recovery by partner and role
 - [ ] Fight-night simulation mode with walkout, corner timing and score card
 - [ ] Apple Watch motion-based strike counting and output-per-heartbeat efficiency
