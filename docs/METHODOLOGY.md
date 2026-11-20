@@ -197,6 +197,22 @@ Each cycle has three steps:
 
 **Combos** come from a curated library of boxing, kickboxing, Muay Thai and defence-counter combinations. They're filtered by enabled strike types and difficulty (strike-count ranges of 1–3, 2–4, 3–5 and 3–6), and never repeat within the last 4 combos. Optionally (35%), a punch-ending combo closes with an opposite-side low kick (the Dutch finish).
 
+## Signature insights
+
+**Gas Tank.** For each recent session (last 6 weeks) with 3+ rounds of at least 75 s, a linear fit of round-average HR against round number gives a starting HR and a per-round creep. The medians across sessions are projected forward for 3×2, 3×3 and 5×3, with creep scaled by √(round length ÷ your usual round length). A round "fails" when projected HR passes the redline (halfway between your Zone 4 ceiling and max HR) or when the fitted fade in between-round recovery would leave less than 10 BPM of recovery. Readiness = the share of rounds completed before the first failure.
+
+**Combo cost.** Every combo the bag coach calls is time-stamped. Its cost is the peak HR between 2 s and 12 s after the call minus HR at the call. Costs are averaged by type (punches only, with kicks, knees and elbows, defence) and by exact combo, with at least 3 occurrences needed per row and 15 combos overall.
+
+**Benchmark.** A fixed-ID plan (5 min rope, 5 × 3 min fight-pace bag rounds with a fixed combo list, 1 min rest), so every attempt is the same external work. Progress is average work HR and average between-round recovery versus your first attempt.
+
+**Performance drivers.** Each session is paired with the readiness check from the same morning (within 14 h). Groups are compared (good vs poor sleep, HRV above vs below your mean ln RMSSD, resting HR 5+ BPM above normal, within 30 h of a hard session, morning vs evening) on review score and between-round recovery. A driver is shown only when both groups have 3+ sessions and the gap is meaningful (≥5 score points or ≥3 BPM of recovery).
+
+**Head movement.** AirPods motion data (CMHeadphoneMotionManager). A movement is counted when head rotation speed crosses 2.2 rad/s, with hysteresis (resets below 60% of the threshold) and a 0.35 s refractory window.
+
+**Breathing coherence.** From the last ~90 RR intervals, the 10th–90th percentile swing in beat-to-beat HR is mapped from 3 BPM (0) to 15 BPM (100). Slow paced breathing increases this respiratory swing.
+
+**Soreness patterns.** For each body area logged 2+ times, the 72 h before each log are checked for 2+ kicking sessions (kicking areas) or a 3-day load above 1.5× your typical 3-day load.
+
 ## References
 
 - Banister EW. *Modeling elite athletic performance.* In: Physiological Testing of Elite Athletes, 1991.

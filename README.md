@@ -93,6 +93,18 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Results back to the coach**: per-block completion, HR, time in target, rounds and strikes, plus RPE and notes, sent as a `.fightresult` file the coach can open in FIGHT
 - **Templates**: *1-2 & Low Kick Sharpening*, *Fight-Pace Rounds*, *Muay Thai Clinch Day*, *Conditioning Circuit*, and *Technique + Roadwork*
 
+### ⚡ Signature insights: what only your heart-rate data can tell you
+- **Gas Tank**: projects whether you're ready for 3×2, 3×3 or 5×3 from how fast your heart rate climbs round after round and how your recovery fades, and names the round where you'd redline
+- **Combo cost**: the bag coach logs every combination it calls, then measures the heart-rate price of each one. "Kicks cost you 2.1× the heart rate of punch combos"
+- **FIGHT Benchmark**: a fixed 5 × 3 min test to repeat every 4 weeks. Same work every time, so "9 BPM lower, recovery +11" is real progress
+- **What drives your performance**: finds your own patterns, such as sleep, HRV above baseline, back-to-back hard days and time of day, against your session scores and recovery
+- **Head movement**: AirPods count slips, rolls and pulls per round, so you can see if you stop moving your head when you get tired
+- **Breathing trainer**: paced in-4, out-6 breathing with a live coherence meter from your strap, optional breathing tones on the stool, and a check of whether it actually improves your recovery
+- **Soreness map**: tap where it hurts in the morning check. The coach adjusts today's advice and spots patterns, like shin soreness after back-to-back kicking days
+- **Records and badges**: personal records (best recovery, most hard rounds, longest Zone 2, most strikes called) with a spoken alert the moment you beat your best recovery
+- **Fighter card**: a shareable image of your Fight Fitness, ratings and gas tank
+- **Hands-free with Siri**: "Start bag coach in FIGHT", "End round in FIGHT", "FIGHT readiness check", with gloves on
+
 ### 📅 Fight Camp: plan, cut, report
 - **Periodization planner**: set the fight date and camp length (4–16 weeks) to get weekly load targets, deload weeks, key sessions and intensity mix per phase, tracked against what you actually did
 - **Weight-cut tracker**: daily weigh-ins (or imported from a smart scale via Apple Health), trend, required rate per week, projected fight-night weight, urine-colour hydration logging, and kg or lb
@@ -100,6 +112,8 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Morning reminder**: a daily nudge to weigh in and take your readiness check
 - **Dehydration and safety warnings**: rapid drops, dark urine, resting HR rising while weight falls, HRV suppression, unrealistic targets, and >5% left to cut in fight week
 - **Body signals**: morning resting HR and HRV charted alongside your cut
+- **This camp vs last camp**: weekly load lined up by weeks to fight, so you know if you're ahead or behind your last camp
+- **Fight-night warm-up**: set your walkout time and get a warm-up that ends right on it, with a reminder for when to start
 - **Weekly PDF report for your trainer**: ratings, sessions with review scores, camp progress, weight, health flags and the suggested next session
 
 ### 📈 History and analysis
@@ -193,7 +207,7 @@ FIGHT/
 ├── Config/
 │   └── FIGHT.entitlements          # HealthKit
 ├── .github/workflows/build.yml     # Cloud build → IPA
-├── Tests/FIGHTTests/               # Unit tests (HRV, coach, camp, combos, plans)
+├── Tests/FIGHTTests/               # Unit tests (HRV, coach, camp, combos, plans, insights)
 ├── docs/                           # Methodology, logo and banner
 └── Sources/
     ├── PlanKit/                    # Shared plan format: strikes, plans, results, file/link/QR transfer
@@ -206,6 +220,10 @@ FIGHT/
     │   ├── BagSettingsView.swift       # Bag coach settings and custom-combo builder
     │   ├── AudioCoachEngine.swift      # Sequenced voice combos, bells, clapper, spoken coaching
     │   ├── CoachEngine.swift           # Ratings, load model, prescriptions, workout reviews
+    │   ├── Insights.swift              # Gas tank, combo cost, benchmark, drivers, records, soreness, camp compare
+    │   ├── InsightViews.swift          # Cards and sheets for the signature insights
+    │   ├── HeadMotionTracker.swift     # AirPods head-movement counting
+    │   ├── FightIntents.swift          # Siri and Shortcuts
     │   ├── HRVMath.swift               # RR artifact correction, RMSSD, DFA α1, VT1 estimate
     │   ├── CoachView.swift             # Coach tab
     │   ├── ReadinessCheckView.swift    # 2-minute morning HRV / resting HR check
@@ -232,7 +250,7 @@ FIGHT/
 
 - [ ] **FIGHT Coach**: a companion app for coaches (roster, plan assignment, compliance), built on the shared `PlanKit` format
 - [ ] Sparring-partner tagging: HR cost and recovery by partner and role
-- [ ] Fight-night simulation mode with walkout, corner timing and score card
+- [ ] Fight log: compare fight-night heart rate with training (the "adrenaline tax")
 - [ ] Apple Watch motion-based strike counting and output-per-heartbeat efficiency
 - [ ] Sparring video synced to the HR trace
 - [ ] Dual-sensor mode (e.g. armband + chest strap) for lab-grade HRV in hard rounds
