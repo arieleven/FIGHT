@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" width="1280" height="400" role="img" aria-label="Coospo Workout — data-driven conditioning for fighters">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0d12"/>
+      <stop offset="1" stop-color="#161a24"/>
+    </linearGradient>
+    <linearGradient id="zones" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="0.25" stop-color="#22c55e"/>
+      <stop offset="0.5" stop-color="#eab308"/>
+      <stop offset="0.75" stop-color="#f97316"/>
+      <stop offset="1" stop-color="#ef4444"/>
+    </linearGradient>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ef4444" stop-opacity="0"/>
+      <stop offset="0.15" stop-color="#ef4444" stop-opacity="1"/>
+      <stop offset="1" stop-color="#ef4444" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="400" fill="url(#bg)"/>
+
+  <!-- subtle grid -->
+  <g stroke="#ffffff" stroke-opacity="0.04">
+    <path d="M0 80H1280M0 160H1280M0 240H1280M0 320H1280"/>
+    <path d="M160 0V400M320 0V400M480 0V400M640 0V400M800 0V400M960 0V400M1120 0V400"/>
+  </g>
+
+  <!-- heart-rate trace: rounds and rests -->
+  <path d="M0 322 L120 322 L150 321 L170 284 L185 337 L200 319 L260 317
+           L300 316 L330 274 L345 332 L360 313 L420 309 L450 307 L480 260 L495 322 L510 298
+           L560 298 L600 318 L640 321
+           L680 320 L710 279 L725 331 L740 308 L800 304 L830 302 L860 250 L875 318 L890 289
+           L940 287 L980 315 L1020 319 L1060 318 L1090 245 L1105 313 L1120 279 L1180 274 L1280 274"
+        fill="none" stroke="url(#fade)" stroke-width="4" stroke-linejoin="round" stroke-linecap="round" opacity="0.9"/>
+
+  <!-- zone band -->
+  <rect x="80" y="352" width="1120" height="8" rx="4" fill="url(#zones)" opacity="0.9"/>
+  <g font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif" font-size="13" fill="#9ca3af" font-weight="600">
+    <text x="80" y="382">Z1 RECOVERY</text>
+    <text x="330" y="382">Z2 AEROBIC</text>
+    <text x="570" y="382">Z3 TEMPO</text>
+    <text x="800" y="382">Z4 THRESHOLD</text>
+    <text x="1060" y="382">Z5 ANAEROBIC</text>
+  </g>
+
+  <!-- title block -->
+  <g font-family="-apple-system, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+    <g transform="translate(80 86)">
+      <path d="M24 42 C10 32 0 22 0 12 C0 4 6 -2 13 -2 C18 -2 22 1 24 5 C26 1 30 -2 35 -2 C42 -2 48 4 48 12 C48 22 38 32 24 42 Z" fill="#ef4444"/>
+    </g>
+    <text x="146" y="122" font-size="58" font-weight="800" fill="#ffffff" letter-spacing="-1">Coospo Workout</text>
+    <text x="82" y="172" font-size="26" font-weight="600" fill="#d1d5db">Data-driven conditioning for kickboxers, Muay Thai &amp; MMA fighters</text>
+    <text x="82" y="208" font-size="18" font-weight="500" fill="#9ca3af">Live HR rounds • Coach ratings &amp; next-session plans • HRV readiness • Fight-camp periodization • Safe weight cuts</text>
+  </g>
+</svg>
