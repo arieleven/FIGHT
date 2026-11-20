@@ -78,6 +78,34 @@ struct AudioCoachSettings: Codable, Equatable {
     var periodicMinutes: Int = 2 // 0 = Off, 1, 2, 3, 5
     var announceRedlineWarning: Bool = true
     var announceGhostDelta: Bool = true
+    var duckMusic: Bool = true
+    var clapperWarnings: Bool = true
+    var voiceVolume: Double = 1.0
+    var bellVolume: Double = 0.9
+
+    init() {}
+
+    enum CodingKeys: String, CodingKey {
+        case masterEnabled, announceZoneCrossings, zone2CeilingAlert, announceRoundWarnings, announceStoolRecovery
+        case periodicMinutes, announceRedlineWarning, announceGhostDelta, duckMusic, clapperWarnings, voiceVolume, bellVolume
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AudioCoachSettings()
+        masterEnabled = (try? c.decodeIfPresent(Bool.self, forKey: .masterEnabled)) ?? d.masterEnabled
+        announceZoneCrossings = (try? c.decodeIfPresent(Bool.self, forKey: .announceZoneCrossings)) ?? d.announceZoneCrossings
+        zone2CeilingAlert = (try? c.decodeIfPresent(Bool.self, forKey: .zone2CeilingAlert)) ?? d.zone2CeilingAlert
+        announceRoundWarnings = (try? c.decodeIfPresent(Bool.self, forKey: .announceRoundWarnings)) ?? d.announceRoundWarnings
+        announceStoolRecovery = (try? c.decodeIfPresent(Bool.self, forKey: .announceStoolRecovery)) ?? d.announceStoolRecovery
+        periodicMinutes = (try? c.decodeIfPresent(Int.self, forKey: .periodicMinutes)) ?? d.periodicMinutes
+        announceRedlineWarning = (try? c.decodeIfPresent(Bool.self, forKey: .announceRedlineWarning)) ?? d.announceRedlineWarning
+        announceGhostDelta = (try? c.decodeIfPresent(Bool.self, forKey: .announceGhostDelta)) ?? d.announceGhostDelta
+        duckMusic = (try? c.decodeIfPresent(Bool.self, forKey: .duckMusic)) ?? d.duckMusic
+        clapperWarnings = (try? c.decodeIfPresent(Bool.self, forKey: .clapperWarnings)) ?? d.clapperWarnings
+        voiceVolume = (try? c.decodeIfPresent(Double.self, forKey: .voiceVolume)) ?? d.voiceVolume
+        bellVolume = (try? c.decodeIfPresent(Double.self, forKey: .bellVolume)) ?? d.bellVolume
+    }
 }
 
 struct AthleteProfile: Codable, Identifiable, Equatable {
@@ -98,12 +126,14 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var audioCoach: AudioCoachSettings = AudioCoachSettings()
     var fightDate: Date? = nil
     var campLengthWeeks: Int = 8
+    var bagPreferences = BagPreferences()
+    var useImperial = false
 
     enum CodingKeys: String, CodingKey {
         case id, name, sex, age, weightKg, heightCm, targetFightWeightKg
         case restingHR, useAutoMaxHR, maxHR, lactateThresholdHR, zoneMethod
         case manualZones, campPhase, audioCoach
-        case fightDate, campLengthWeeks
+        case fightDate, campLengthWeeks, bagPreferences, useImperial
     }
 
     init() {}
@@ -124,9 +154,11 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         zoneMethod = try c.decodeIfPresent(ZoneCalculationMethod.self, forKey: .zoneMethod) ?? .karvonenHRR
         manualZones = try c.decodeIfPresent(ZoneThresholds.self, forKey: .manualZones) ?? ZoneThresholds(z1Max: 125, z2Max: 145, z3Max: 162, z4Max: 178)
         campPhase = try c.decodeIfPresent(CampPhase.self, forKey: .campPhase) ?? .fightCamp
-        audioCoach = try c.decodeIfPresent(AudioCoachSettings.self, forKey: .audioCoach) ?? AudioCoachSettings()
+        audioCoach = (try? c.decodeIfPresent(AudioCoachSettings.self, forKey: .audioCoach)) ?? AudioCoachSettings()
         fightDate = try c.decodeIfPresent(Date.self, forKey: .fightDate)
         campLengthWeeks = try c.decodeIfPresent(Int.self, forKey: .campLengthWeeks) ?? 8
+        bagPreferences = (try? c.decodeIfPresent(BagPreferences.self, forKey: .bagPreferences)) ?? BagPreferences()
+        useImperial = (try? c.decodeIfPresent(Bool.self, forKey: .useImperial)) ?? false
     }
 
     mutating func sanitize() {
@@ -346,22 +378,6 @@ enum BagTempo: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-struct BagCoachConfig: Equatable {
-    var enabled: Bool = false
-    var mode: BagCoachMode = .voiceCombos
-    var totalMinutes: Int = 30
-    var workSeconds: Int = 180
-    var restSeconds: Int = 60
-    var tempo: BagTempo = .steady
-    var includeKicks: Bool = true
-    var includeKneesElbows: Bool = true
-    var includeDefense: Bool = true
-
-    var estimatedTotalRounds: Int {
-        let cycle = max(30, workSeconds + restSeconds)
-        return max(1, (totalMinutes * 60) / cycle)
-    }
-}
 
 // MARK: - Telemetry & Analytics Models
 
@@ -492,7 +508,14 @@ struct GhostSession: Identifiable, Equatable, Hashable {
         guard !samples.isEmpty else { return nil }
         if elapsed <= samples.first!.elapsedSeconds { return samples.first!.bpm }
         if elapsed >= samples.last!.elapsedSeconds { return nil }
-        if let idx = samples.firstIndex(where: { $0.elapsedSeconds >= elapsed }) {
+        // Binary search for the first sample at or after `elapsed`.
+        var lo = 0, hi = samples.count - 1
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if samples[mid].elapsedSeconds < elapsed { lo = mid + 1 } else { hi = mid }
+        }
+        if samples[lo].elapsedSeconds >= elapsed {
+            let idx = lo
             if idx == 0 { return samples[0].bpm }
             let prev = samples[idx - 1]
             let next = samples[idx]
@@ -510,8 +533,8 @@ struct SavedWorkout: Codable, Identifiable {
     let profileName: String
     let category: WorkoutCategory
     let drillTag: DrillTag
-    let rpe: Int
-    let notes: String
+    var rpe: Int
+    var notes: String
     let startDate: Date
     let endDate: Date
     let duration: TimeInterval
@@ -536,6 +559,11 @@ struct SavedWorkout: Codable, Identifiable {
     var samples: [HeartRatePoint]
     var isCompressedArchive: Bool
     var archiveFileName: String?
+    var rpeRated: Bool = false
+    var planTitle: String?
+    var planTargetLow: Int?
+    var planTargetHigh: Int?
+    var planAdherence: Double?
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -545,6 +573,7 @@ struct SavedWorkout: Codable, Identifiable {
         case rmssdMs, strikesCuedCount, ghostBaselineName, ghostAvgDeltaBPM
         case zoneSeconds, roundStats, pointsOfInterest, samples
         case isCompressedArchive, archiveFileName
+        case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
     }
 
     init(
@@ -578,7 +607,12 @@ struct SavedWorkout: Codable, Identifiable {
         pointsOfInterest: [WorkoutPOI],
         samples: [HeartRatePoint],
         isCompressedArchive: Bool,
-        archiveFileName: String?
+        archiveFileName: String?,
+        rpeRated: Bool = false,
+        planTitle: String? = nil,
+        planTargetLow: Int? = nil,
+        planTargetHigh: Int? = nil,
+        planAdherence: Double? = nil
     ) {
         self.id = id
         self.profileID = profileID
@@ -611,6 +645,11 @@ struct SavedWorkout: Codable, Identifiable {
         self.samples = samples
         self.isCompressedArchive = isCompressedArchive
         self.archiveFileName = archiveFileName
+        self.rpeRated = rpeRated
+        self.planTitle = planTitle
+        self.planTargetLow = planTargetLow
+        self.planTargetHigh = planTargetHigh
+        self.planAdherence = planAdherence
     }
 
     init(from decoder: Decoder) throws {
@@ -647,6 +686,23 @@ struct SavedWorkout: Codable, Identifiable {
         samples = try c.decodeIfPresent([HeartRatePoint].self, forKey: .samples) ?? []
         isCompressedArchive = try c.decodeIfPresent(Bool.self, forKey: .isCompressedArchive) ?? false
         archiveFileName = try c.decodeIfPresent(String.self, forKey: .archiveFileName)
+        rpeRated = (try? c.decodeIfPresent(Bool.self, forKey: .rpeRated)) ?? false
+        planTitle = try? c.decodeIfPresent(String.self, forKey: .planTitle)
+        planTargetLow = try? c.decodeIfPresent(Int.self, forKey: .planTargetLow)
+        planTargetHigh = try? c.decodeIfPresent(Int.self, forKey: .planTargetHigh)
+        planAdherence = try? c.decodeIfPresent(Double.self, forKey: .planAdherence)
+    }
+
+    /// Session-RPE (Foster) converted to TRIMP-equivalent units.
+    var sessionRPELoad: Double {
+        Double(rpe) * (duration / 60.0) * 0.25
+    }
+
+    /// Training load used everywhere in the coach: heart-rate TRIMP, blended 50/50
+    /// with session-RPE once the athlete has rated the session (HR alone
+    /// under-reads sparring, clinch and strength work).
+    var effectiveLoad: Double {
+        rpeRated ? (trimpScore + sessionRPELoad) / 2 : trimpScore
     }
 
     var avgInterRoundDrop: Int? {

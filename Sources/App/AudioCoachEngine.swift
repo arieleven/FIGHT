@@ -2,362 +2,565 @@ import Foundation
 @preconcurrency import AVFoundation
 import Combine
 
+/// Resumes a continuation at most once, from whichever path (playback
+/// completion or safety timeout) gets there first.
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if fired { return false }
+        fired = true
+        return true
+    }
+}
+
+/// Thread-safe accumulator for speech-synthesis chunks.
+private final class ChunkBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [AVAudioPCMBuffer] = []
+    func append(_ b: AVAudioPCMBuffer) { lock.lock(); chunks.append(b); lock.unlock() }
+    func all() -> [AVAudioPCMBuffer] { lock.lock(); defer { lock.unlock() }; return chunks }
+}
+
+/// Context the bag-coach loop reads from the workout session.
+struct BagLoopContext {
+    var isWorkPhase: () -> Bool
+    var roundProgress: () -> Double
+    /// Seconds left in the current work phase, or nil when there's no round timer.
+    var workRemaining: () -> Double?
+    /// −1 below the plan's HR band, 0 inside (or no plan), +1 above.
+    var hrBandStatus: () -> Int
+}
+
+/// All workout audio: bag-work combos, coach announcements and bells, each on its
+/// own player so they never queue behind one another.
 @MainActor
 final class AudioCoachEngine: NSObject, ObservableObject {
-    @Published var currentComboDisplay: String = ""
+    // Bag-coach display state
+    @Published private(set) var comboTokens: [String] = []
+    @Published private(set) var activeTokenIndex: Int = -1
+    @Published private(set) var comboSerial: Int = 0
+    @Published private(set) var bagStatus: String = ""
     @Published var strikesCuedCount: Int = 0
-    @Published var isPreparingAudio: Bool = false
+    @Published private(set) var isPreparingAudio = false
+    @Published private(set) var preparationProgress: Double = 0
+    @Published private(set) var voiceName: String = ""
 
-    private let audioEngine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
-    private let synthesizer = AVSpeechSynthesizer()
-    private var engineReady = false
+    private let engine = AVAudioEngine()
+    private let comboNode = AVAudioPlayerNode()
+    private let voiceNode = AVAudioPlayerNode()
+    private let fxNode = AVAudioPlayerNode()
+    private let format = AVAudioFormat(standardFormatWithSampleRate: 22050, channels: 1)!
+    private let vocabSynth = AVSpeechSynthesizer()
+    private let voiceSynth = AVSpeechSynthesizer()
+    private var graphReady = false
     private var audioEnabled = true
+    private var duckMusic = true
 
-    private var tokenBuffers: [String: AVAudioPCMBuffer] = [:]
-    private var beepHighBuffer: AVAudioPCMBuffer?
-    private var beepLowBuffer: AVAudioPCMBuffer?
-    private var bellBuffer: AVAudioPCMBuffer?
+    private var phraseCache: [String: AVAudioPCMBuffer] = [:]
+    private var cachedRate: Float = 0
+    private var bagTask: Task<Void, Never>?
+    private var isComboSpeaking = false
 
-    private var bagTimerTask: Task<Void, Never>?
-    private var announcementQueue: [String] = []
-    private var isSpeakingDynamic = false
+    private struct Announcement { let text: String; let created: Date }
+    private var announcementQueue: [Announcement] = []
+    private var announcementTask: Task<Void, Never>?
 
-    private let punchTokens = [
-        "Jab!", "Cross!", "Left hook!", "Right hook!",
-        "Left uppercut!", "Right uppercut!", "Body jab!", "Right body hook!"
-    ]
-    private let kickTokens = [
-        "Left middle kick!", "Right middle kick!",
-        "Left low kick!", "Right low kick!", "Teep!", "Switch kick!"
-    ]
-    private let closeRangeTokens = [
-        "Left knee!", "Right knee!", "Left elbow!", "Right elbow!"
-    ]
-    private let defenseTokens = [
-        "Slip!", "Roll!", "Check!", "Pivot!"
-    ]
+    private lazy var bellBuffer = Self.bell(strikes: 1)
+    private lazy var tripleBellBuffer = Self.bell(strikes: 3)
+    private lazy var clapperBuffer = Self.clapper()
+
+    private lazy var bestVoice: AVSpeechSynthesisVoice? = {
+        let english = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("en") }
+        func rank(_ v: AVSpeechSynthesisVoice) -> Int {
+            var r = 0
+            switch v.quality {
+            case .premium: r += 300
+            case .enhanced: r += 200
+            default: r += 100
+            }
+            if v.language == "en-US" { r += 20 }
+            if v.voiceTraits.contains(.isNoveltyVoice) { r -= 500 }
+            return r
+        }
+        return english.max { rank($0) < rank($1) } ?? AVSpeechSynthesisVoice(language: "en-US")
+    }()
 
     override init() {
         super.init()
-        setupAudioSessionAndEngine()
-        buildSynthesizedCues()
+        buildGraph()
+        voiceName = bestVoice?.name ?? "System voice"
     }
 
-    // Only wires the graph. The session and engine are started on demand by
-    // ensureEngineRunning(), so the app is not holding an active audio session
-    // (and staying awake in the background via UIBackgroundModes=audio) from launch.
-    private func setupAudioSessionAndEngine() {
-        guard !engineReady else { return }
-        audioEngine.attach(playerNode)
-        if let format = AVAudioFormat(standardFormatWithSampleRate: 22050, channels: 1) {
-            audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
-            engineReady = true
+    // MARK: Engine & session
+
+    private func buildGraph() {
+        guard !graphReady else { return }
+        for node in [comboNode, voiceNode, fxNode] {
+            engine.attach(node)
+            engine.connect(node, to: engine.mainMixerNode, format: format)
+        }
+        graphReady = true
+    }
+
+    /// Applies the athlete's audio settings (volumes, music ducking).
+    func configure(settings: AudioCoachSettings) {
+        comboNode.volume = Float(settings.voiceVolume)
+        voiceNode.volume = Float(settings.voiceVolume)
+        fxNode.volume = Float(settings.bellVolume)
+        if duckMusic != settings.duckMusic {
+            duckMusic = settings.duckMusic
+            if engine.isRunning { try? activateSession() }
         }
     }
 
+    private func activateSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        var options: AVAudioSession.CategoryOptions = [.mixWithOthers]
+        if duckMusic { options.insert(.duckOthers) }
+        try session.setCategory(.playback, mode: .spokenAudio, options: options)
+        try session.setActive(true)
+    }
+
     private func ensureEngineRunning() {
-        guard engineReady, audioEnabled else { return }
-        if !audioEngine.isRunning {
+        guard graphReady, audioEnabled else { return }
+        if !engine.isRunning {
             do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-                try session.setActive(true)
-                try audioEngine.start()
+                try activateSession()
+                try engine.start()
             } catch {
                 print("Audio start error: \(error)")
                 return
             }
         }
-        if !playerNode.isPlaying {
-            playerNode.play()
+        for node in [comboNode, voiceNode, fxNode] where !node.isPlaying {
+            node.play()
         }
     }
 
-    /// Call at workout start so cues can play again after a previous shutdown.
-    func prepareForWorkout() {
+    /// Starts audio for a workout. The running engine also keeps the app alive in
+    /// the background (UIBackgroundModes: audio) so round timing stays accurate.
+    func prepareForWorkout(settings: AudioCoachSettings) {
         audioEnabled = true
+        configure(settings: settings)
+        ensureEngineRunning()
     }
 
-    /// Stops the engine and releases the audio session after a workout.
+    /// Stops all audio and releases the session after a workout.
     func shutdownAudio() {
         audioEnabled = false
+        stopBagCoach()
+        announcementTask?.cancel()
+        announcementTask = nil
         announcementQueue.removeAll()
-        playerNode.stop()
-        audioEngine.stop()
+        for node in [comboNode, voiceNode, fxNode] { node.stop() }
+        engine.stop()
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
-    func prepareStrikeVocabulary() async {
-        let allTokens = punchTokens + kickTokens + closeRangeTokens + defenseTokens
-        let missing = allTokens.filter { tokenBuffers[$0] == nil }
-        guard !missing.isEmpty else { return }
+    // MARK: Speech rendering
 
+    /// Pre-renders every phrase the bag coach can say, so the first round starts instantly.
+    func prepareVocabulary(prefs: BagPreferences) async {
+        let rate = prefs.tempo.speechRate
+        if rate != cachedRate {
+            phraseCache.removeAll()
+            cachedRate = rate
+        }
+        let phrases = ComboGenerator.vocabulary(prefs: prefs).filter { phraseCache[$0] == nil }
+        guard !phrases.isEmpty else { return }
         isPreparingAudio = true
-        for token in missing {
-            if let buf = await renderSpeechToPCMBuffer(text: token, rate: 0.56) {
-                tokenBuffers[token] = buf
+        preparationProgress = 0
+        for (i, phrase) in phrases.enumerated() {
+            if Task.isCancelled { break }
+            if let buf = await render(phrase, rate: rate, synth: vocabSynth) {
+                phraseCache[phrase] = buf
             }
+            preparationProgress = Double(i + 1) / Double(phrases.count)
         }
         isPreparingAudio = false
     }
 
-    private func renderSpeechToPCMBuffer(text: String, rate: Float) async -> AVAudioPCMBuffer? {
+    private func render(_ text: String, rate: Float, synth: AVSpeechSynthesizer) async -> AVAudioPCMBuffer? {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.voice = bestVoice
         utterance.rate = rate
         utterance.pitchMultiplier = 1.05
         utterance.volume = 1.0
 
-        return await withCheckedContinuation { continuation in
-            var chunks: [AVAudioPCMBuffer] = []
-            var resumed = false
-
-            synthesizer.write(utterance) { buffer in
+        let box = ChunkBox()
+        let once = ResumeOnce()
+        return await withCheckedContinuation { (continuation: CheckedContinuation<AVAudioPCMBuffer?, Never>) in
+            synth.write(utterance) { buffer in
                 guard let pcm = buffer as? AVAudioPCMBuffer else { return }
                 if pcm.frameLength > 0 {
-                    chunks.append(pcm)
-                } else if !resumed {
-                    resumed = true
-                    let combined = Self.mergeAndResample(chunks: chunks, targetRate: 22050)
-                    continuation.resume(returning: combined)
+                    box.append(pcm)
+                } else if once.claim() {
+                    continuation.resume(returning: Self.prepare(chunks: box.all()))
+                }
+            }
+            // Some iOS versions never deliver the final empty buffer: don't hang.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4) {
+                if once.claim() {
+                    continuation.resume(returning: Self.prepare(chunks: box.all()))
                 }
             }
         }
+    }
+
+    private nonisolated static func prepare(chunks: [AVAudioPCMBuffer]) -> AVAudioPCMBuffer? {
+        guard let merged = mergeAndResample(chunks: chunks, targetRate: 22050) else { return nil }
+        return trimSilence(merged)
     }
 
     private nonisolated static func mergeAndResample(chunks: [AVAudioPCMBuffer], targetRate: Double) -> AVAudioPCMBuffer? {
         guard let first = chunks.first else { return nil }
         let totalFrames = chunks.reduce(0) { $0 + Int($1.frameLength) }
         guard totalFrames > 0,
-              let monoSourceFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: first.format.sampleRate, channels: 1, interleaved: false),
-              let combined = AVAudioPCMBuffer(pcmFormat: monoSourceFormat, frameCapacity: AVAudioFrameCount(totalFrames)) else {
+              let monoSource = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: first.format.sampleRate, channels: 1, interleaved: false),
+              let combined = AVAudioPCMBuffer(pcmFormat: monoSource, frameCapacity: AVAudioFrameCount(totalFrames)),
+              let dst = combined.floatChannelData?[0] else {
             return nil
         }
-
         combined.frameLength = AVAudioFrameCount(totalFrames)
-        guard let dst = combined.floatChannelData?[0] else { return nil }
-
         var offset = 0
         for chunk in chunks {
             let count = Int(chunk.frameLength)
-            if let floatData = chunk.floatChannelData?[0] {
-                dst.advanced(by: offset).update(from: floatData, count: count)
-            } else if let int16Data = chunk.int16ChannelData?[0] {
-                for i in 0..<count {
-                    dst[offset + i] = Float(int16Data[i]) / 32768.0
-                }
+            if let f = chunk.floatChannelData?[0] {
+                dst.advanced(by: offset).update(from: f, count: count)
+            } else if let i16 = chunk.int16ChannelData?[0] {
+                for i in 0..<count { dst[offset + i] = Float(i16[i]) / 32768.0 }
             }
             offset += count
         }
+        if abs(monoSource.sampleRate - targetRate) < 1 { return combined }
 
-        if abs(monoSourceFormat.sampleRate - targetRate) < 1.0 {
+        guard let target = AVAudioFormat(standardFormatWithSampleRate: targetRate, channels: 1),
+              let converter = AVAudioConverter(from: monoSource, to: target),
+              let out = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: AVAudioFrameCount(Double(totalFrames) * targetRate / monoSource.sampleRate) + 64) else {
             return combined
         }
-
-        guard let targetFormat = AVAudioFormat(standardFormatWithSampleRate: targetRate, channels: 1),
-              let converter = AVAudioConverter(from: monoSourceFormat, to: targetFormat) else {
-            return combined
-        }
-
-        let ratio = targetRate / monoSourceFormat.sampleRate
-        let outCapacity = AVAudioFrameCount(Double(totalFrames) * ratio) + 64
-        guard let outBuffer = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: outCapacity) else {
-            return combined
-        }
-
+        var consumed = false
         var error: NSError?
-        var inputConsumed = false
-        converter.convert(to: outBuffer, error: &error) { _, outStatus in
-            if inputConsumed {
-                outStatus.pointee = .endOfStream
+        converter.convert(to: out, error: &error) { _, status in
+            if consumed {
+                status.pointee = .endOfStream
                 return nil
             }
-            inputConsumed = true
-            outStatus.pointee = .haveData
+            consumed = true
+            status.pointee = .haveData
             return combined
         }
-        return outBuffer.frameLength > 0 ? outBuffer : combined
+        return out.frameLength > 0 ? out : combined
     }
 
-    private func buildSynthesizedCues() {
-        beepHighBuffer = makeToneBuffer(freq: 1046.5, duration: 0.085, amplitude: 0.55)
-        beepLowBuffer = makeToneBuffer(freq: 784.0, duration: 0.095, amplitude: 0.55)
-        bellBuffer = makeToneBuffer(freq: 1318.5, duration: 0.28, amplitude: 0.65)
+    /// Removes the synthesizer's leading/trailing silence so callouts are snappy.
+    nonisolated static func trimSilence(_ buf: AVAudioPCMBuffer, threshold: Float = 0.012, padSeconds: Double = 0.025) -> AVAudioPCMBuffer {
+        guard let data = buf.floatChannelData?[0] else { return buf }
+        let n = Int(buf.frameLength)
+        guard n > 0 else { return buf }
+        var start = 0
+        while start < n && abs(data[start]) < threshold { start += 1 }
+        var end = n - 1
+        while end > start && abs(data[end]) < threshold { end -= 1 }
+        guard start < end else { return buf }
+        let pad = Int(padSeconds * buf.format.sampleRate)
+        start = max(0, start - pad)
+        end = min(n - 1, end + pad)
+        let count = end - start + 1
+        guard count < n,
+              let out = AVAudioPCMBuffer(pcmFormat: buf.format, frameCapacity: AVAudioFrameCount(count)),
+              let dst = out.floatChannelData?[0] else { return buf }
+        dst.update(from: data.advanced(by: start), count: count)
+        out.frameLength = AVAudioFrameCount(count)
+        return out
     }
 
-    private func makeToneBuffer(freq: Double, duration: Double, amplitude: Float) -> AVAudioPCMBuffer? {
-        let sampleRate = 22050.0
-        let frameCount = Int(sampleRate * duration)
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)) else {
-            return nil
-        }
-        buffer.frameLength = AVAudioFrameCount(frameCount)
-        guard let data = buffer.floatChannelData?[0] else { return nil }
+    // MARK: Playback
 
-        for i in 0..<frameCount {
-            let t = Double(i) / sampleRate
-            let envelope = Float(exp(-t * 18.0))
-            let wave = Float(sin(2.0 * .pi * freq * t))
-            data[i] = wave * envelope * amplitude
-        }
-        return buffer
+    private static func duration(_ buffers: [AVAudioPCMBuffer]) -> Double {
+        buffers.reduce(0) { $0 + Double($1.frameLength) / $1.format.sampleRate }
     }
 
-    func playBellCue() {
+    /// Schedules buffers back-to-back and returns once the last one has actually
+    /// been heard (or a safety timeout passes). `onAdvance(i)` fires as buffer i begins.
+    private func playAndWait(_ buffers: [AVAudioPCMBuffer], on node: AVAudioPlayerNode, onAdvance: (@MainActor (Int) -> Void)? = nil) async {
+        guard !buffers.isEmpty else { return }
         ensureEngineRunning()
-        if let bell = bellBuffer {
-            playerNode.scheduleBuffer(bell, at: nil, options: [], completionHandler: nil)
+        let total = Self.duration(buffers)
+        let once = ResumeOnce()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            for (i, buf) in buffers.enumerated() {
+                let isLast = i == buffers.count - 1
+                node.scheduleBuffer(buf, completionCallbackType: isLast ? .dataPlayedBack : .dataRendered) { _ in
+                    if isLast {
+                        if once.claim() { continuation.resume() }
+                    } else if let onAdvance {
+                        Task { @MainActor in onAdvance(i + 1) }
+                    }
+                }
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + total + 0.9) {
+                if once.claim() { continuation.resume() }
+            }
         }
     }
 
-    func startBagCoachLoop(
-        config: BagCoachConfig,
-        isWorkPhaseProvider: @escaping () -> Bool,
-        roundProgressProvider: @escaping () -> Double
-    ) {
-        stopBagCoachLoop()
-        guard config.enabled else { return }
+    // MARK: Bells
 
-        bagTimerTask = Task {
-            await prepareStrikeVocabulary()
-            ensureEngineRunning()
+    func playRoundStartBell() {
+        ensureEngineRunning()
+        if let b = bellBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
+    }
+
+    func playRoundEndBell() {
+        ensureEngineRunning()
+        if let b = tripleBellBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
+    }
+
+    /// Two sharp claps: the gym's "10 seconds" warning.
+    func playClapper() {
+        ensureEngineRunning()
+        if let b = clapperBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
+    }
+
+    private static func bell(strikes: Int) -> AVAudioPCMBuffer? {
+        let sr = 22050.0
+        let strikeGap = 0.32
+        let ring = 1.1
+        let length = Double(strikes - 1) * strikeGap + ring
+        let frames = Int(sr * length)
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1),
+              let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
+              let d = buf.floatChannelData?[0] else { return nil }
+        buf.frameLength = AVAudioFrameCount(frames)
+        // Inharmonic partials give a metallic bell timbre.
+        let partials: [(Double, Float)] = [(1318.5, 0.5), (2637.0, 0.22), (3520.0, 0.14), (987.8, 0.18)]
+        for i in 0..<frames {
+            let t = Double(i) / sr
+            var v: Float = 0
+            for k in 0..<strikes {
+                let tk = t - Double(k) * strikeGap
+                guard tk >= 0 else { continue }
+                let env = Float(exp(-tk * 4.2))
+                for (f, a) in partials { v += a * env * Float(sin(2 * .pi * f * tk)) }
+            }
+            d[i] = max(-1, min(1, v * 0.7))
+        }
+        return buf
+    }
+
+    private static func clapper() -> AVAudioPCMBuffer? {
+        let sr = 22050.0
+        let frames = Int(sr * 0.32)
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1),
+              let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
+              let d = buf.floatChannelData?[0] else { return nil }
+        buf.frameLength = AVAudioFrameCount(frames)
+        var seed: UInt32 = 12345
+        for i in 0..<frames {
+            let t = Double(i) / sr
+            var v: Float = 0
+            for start in [0.0, 0.16] {
+                let tk = t - start
+                guard tk >= 0, tk < 0.09 else { continue }
+                seed = seed &* 1664525 &+ 1013904223
+                let noise = Float(Int32(bitPattern: seed)) / Float(Int32.max)
+                let env = Float(exp(-tk * 60))
+                v += (noise * 0.6 + Float(sin(2 * .pi * 1800 * tk)) * 0.4) * env
+            }
+            d[i] = max(-1, min(1, v * 0.9))
+        }
+        return buf
+    }
+
+    /// One buffer containing an entire beep pattern, so timing is sample-accurate.
+    private static func beepPattern(for strikes: [Strike]) -> AVAudioPCMBuffer? {
+        let sr = 22050.0
+        var events: [(start: Double, freq: Double, dur: Double)] = []
+        var t = 0.0
+        for s in strikes {
+            switch s.kind {
+            case .punch: events.append((t, 1046.5, 0.08)); t += 0.24
+            case .kick: events.append((t, 659.3, 0.14)); t += 0.40
+            case .knee, .elbow: events.append((t, 830.6, 0.07)); events.append((t + 0.1, 830.6, 0.07)); t += 0.34
+            case .defense: events.append((t, 1318.5, 0.06)); events.append((t + 0.08, 987.8, 0.08)); t += 0.34
+            }
+        }
+        let frames = Int(sr * (t + 0.1))
+        guard frames > 0,
+              let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1),
+              let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
+              let d = buf.floatChannelData?[0] else { return nil }
+        buf.frameLength = AVAudioFrameCount(frames)
+        for i in 0..<frames { d[i] = 0 }
+        for e in events {
+            let s0 = Int(e.start * sr)
+            let n = Int(e.dur * sr)
+            for j in 0..<n where s0 + j < frames {
+                let tt = Double(j) / sr
+                d[s0 + j] += Float(sin(2 * .pi * e.freq * tt) * exp(-tt * 18)) * 0.6
+            }
+        }
+        return buf
+    }
+
+    // MARK: Bag coach
+
+    var isBagCoachRunning: Bool { bagTask != nil }
+
+    func startBagCoach(prefs: BagPreferences, context: BagLoopContext) {
+        stopBagCoach()
+        bagStatus = "READY — HANDS UP"
+        bagTask = Task { [weak self] in
+            guard let self else { return }
+            var generator = ComboGenerator(prefs: prefs)
+            if prefs.mode != .cadenceBeep {
+                await self.prepareVocabulary(prefs: prefs)
+            }
+            self.ensureEngineRunning()
+            var punchOutCalled = false
 
             while !Task.isCancelled {
-                guard isWorkPhaseProvider() else {
-                    currentComboDisplay = "STOOL REST — BREATHE"
-                    try? await Task.sleep(nanoseconds: 350_000_000)
+                guard context.isWorkPhase() else {
+                    punchOutCalled = false
+                    self.setRestDisplay()
+                    try? await Task.sleep(nanoseconds: 250_000_000)
                     continue
                 }
 
-                let progress = roundProgressProvider()
-                let targetCycleSeconds = Double.random(in: config.tempo.pauseRange(roundProgress: progress))
-                let executionDuration: Double
-
-                switch config.mode {
-                case .voiceCombos:
-                    let combo = generateCombo(config: config)
-                    currentComboDisplay = combo.map { $0.replacingOccurrences(of: "!", with: "").uppercased() }.joined(separator: "  →  ")
-                    strikesCuedCount += combo.count
-                    executionDuration = scheduleVoiceCombo(tokens: combo)
-
-                case .cadenceBeep:
-                    let pattern = Bool.random() ? [true, true, true, false, false] : [true, true, false]
-                    currentComboDisplay = pattern.map { $0 ? "PUNCH" : "KICK" }.joined(separator: " • ")
-                    strikesCuedCount += pattern.count
-                    executionDuration = scheduleCadenceBeeps(isPunchPattern: pattern)
-
-                case .hybrid:
-                    let combo = generateCombo(config: config)
-                    currentComboDisplay = combo.map { $0.replacingOccurrences(of: "!", with: "").uppercased() }.joined(separator: "  →  ")
-                    strikesCuedCount += combo.count
-                    if let hi = beepHighBuffer {
-                        playerNode.scheduleBuffer(hi, at: nil, options: [], completionHandler: nil)
+                // Final 10 seconds of the round: continuous straight punches.
+                if let remaining = context.workRemaining(), remaining <= 10.5 {
+                    if !punchOutCalled {
+                        punchOutCalled = true
+                        self.comboTokens = ["PUNCH OUT!"]
+                        self.activeTokenIndex = 0
+                        self.comboSerial += 1
+                        self.bagStatus = ""
+                        if let b = self.phraseCache["Punch out!"] {
+                            self.isComboSpeaking = true
+                            await self.playAndWait([b], on: self.comboNode)
+                            self.isComboSpeaking = false
+                        }
                     }
-                    executionDuration = scheduleVoiceCombo(tokens: combo)
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    continue
                 }
 
-                let remainingPause = max(1.1, targetCycleSeconds - executionDuration)
-                try? await Task.sleep(nanoseconds: UInt64(remainingPause * 1_000_000_000))
+                let combo = generator.next()
+                await self.perform(combo: combo, prefs: prefs, context: context)
             }
         }
     }
 
-    func stopBagCoachLoop() {
-        bagTimerTask?.cancel()
-        bagTimerTask = nil
-        currentComboDisplay = ""
-    }
+    private func perform(combo: [Strike], prefs: BagPreferences, context: BagLoopContext) async {
+        let texts = combo.map { $0.callout(stance: prefs.stance, numbers: prefs.numberCalls) }
+        comboTokens = combo.map { $0.callout(stance: prefs.stance, numbers: prefs.numberCalls).replacingOccurrences(of: "!", with: "").uppercased() }
+        activeTokenIndex = 0
+        comboSerial += 1
+        bagStatus = ""
+        isComboSpeaking = true
 
-    private func generateCombo(config: BagCoachConfig) -> [String] {
-        var combo: [String] = []
-        let length = Int.random(in: 2...4)
-
-        if Double.random(in: 0...1) < 0.75 {
-            combo.append("Jab!")
-        } else {
-            combo.append(punchTokens.randomElement() ?? "Jab!")
+        switch prefs.mode {
+        case .voiceCombos:
+            let buffers = texts.compactMap { phraseCache[$0] }
+            await playAndWait(buffers, on: comboNode) { [weak self] i in self?.activeTokenIndex = i }
+        case .cadenceBeep:
+            if let pattern = Self.beepPattern(for: combo) {
+                activeTokenIndex = combo.count - 1
+                await playAndWait([pattern], on: comboNode)
+            }
+        case .hybrid:
+            if let pattern = Self.beepPattern(for: [combo[0]]) {
+                await playAndWait([pattern], on: comboNode)
+            }
+            let buffers = texts.compactMap { phraseCache[$0] }
+            await playAndWait(buffers, on: comboNode) { [weak self] i in self?.activeTokenIndex = i }
         }
+        isComboSpeaking = false
+        guard !Task.isCancelled, context.isWorkPhase() else { return }
+        activeTokenIndex = combo.count
+        strikesCuedCount += combo.count
 
-        while combo.count < length {
-            let roll = Double.random(in: 0...1)
-            if config.includeDefense && roll < 0.16 && combo.count >= 2 {
-                combo.append(defenseTokens.randomElement() ?? "Slip!")
-            } else if config.includeKneesElbows && roll < 0.32 {
-                combo.append(closeRangeTokens.randomElement() ?? "Right knee!")
-            } else if config.includeKicks && roll < 0.56 {
-                combo.append(kickTokens.randomElement() ?? "Right middle kick!")
-            } else {
-                let last = combo.last ?? ""
-                if last.contains("Jab") {
-                    combo.append(["Cross!", "Right hook!", "Right uppercut!"].randomElement()!)
-                } else if last.contains("Cross") {
-                    combo.append(["Left hook!", "Left uppercut!", "Body jab!"].randomElement()!)
-                } else {
-                    combo.append(punchTokens.randomElement() ?? "Cross!")
-                }
+        // Throwing time, then the tempo's reset — adapted to the HR plan if enabled.
+        let progress = context.roundProgress()
+        let execution = combo.reduce(0) { $0 + $1.executionSeconds } * (prefs.tempo == .burnout ? 0.8 : 1.0)
+        var reset = Double.random(in: prefs.tempo.resetRange(roundProgress: progress))
+        if prefs.adaptiveTempo {
+            switch context.hrBandStatus() {
+            case -1: reset *= 0.7
+            case 1: reset *= 1.4
+            default: break
             }
         }
-        return combo
+        await sleepWhileWorking(execution + reset, context: context)
     }
 
-    private func scheduleVoiceCombo(tokens: [String]) -> Double {
-        ensureEngineRunning()
-        var totalDuration = 0.0
-        for (idx, token) in tokens.enumerated() {
-            guard let buf = tokenBuffers[token] else { continue }
-            let bufSec = Double(buf.frameLength) / buf.format.sampleRate
-            let effectiveSec = max(0.24, bufSec * 0.78)
-            playerNode.scheduleBuffer(buf, at: nil, options: [], completionHandler: nil)
-            totalDuration += effectiveSec
-            if idx < tokens.count - 1 {
-                totalDuration += 0.06
-            }
+    /// Sleeps in short steps so a bell or "punch out" interrupts immediately.
+    private func sleepWhileWorking(_ seconds: Double, context: BagLoopContext) async {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline && !Task.isCancelled && context.isWorkPhase() {
+            if let r = context.workRemaining(), r <= 10.5 { return }
+            try? await Task.sleep(nanoseconds: 80_000_000)
         }
-        return totalDuration
     }
 
-    private func scheduleCadenceBeeps(isPunchPattern: [Bool]) -> Double {
-        ensureEngineRunning()
-        var elapsed = 0.0
-        Task {
-            for (idx, isPunch) in isPunchPattern.enumerated() {
-                if let buf = isPunch ? beepHighBuffer : beepLowBuffer {
-                    playerNode.scheduleBuffer(buf, at: nil, options: [], completionHandler: nil)
-                }
-                if idx < isPunchPattern.count - 1 {
-                    let gap: UInt64 = isPunch ? 240_000_000 : 380_000_000
-                    try? await Task.sleep(nanoseconds: gap)
-                }
-            }
+    private func setRestDisplay() {
+        if bagStatus != "REST — BREATHE" {
+            comboTokens = []
+            activeTokenIndex = -1
+            bagStatus = "REST — BREATHE"
         }
-        for isPunch in isPunchPattern {
-            elapsed += isPunch ? 0.24 : 0.38
-        }
-        return elapsed
     }
 
+    /// Silences any combo mid-sentence (used when the bell goes for rest).
+    func flushCombos() {
+        comboNode.stop()
+        if audioEnabled && engine.isRunning { comboNode.play() }
+        isComboSpeaking = false
+        setRestDisplay()
+    }
+
+    func stopBagCoach() {
+        bagTask?.cancel()
+        bagTask = nil
+        comboNode.stop()
+        if audioEnabled && engine.isRunning { comboNode.play() }
+        isComboSpeaking = false
+        comboTokens = []
+        activeTokenIndex = -1
+        bagStatus = ""
+    }
+
+    // MARK: Coach announcements
+
+    /// Queues a spoken coaching cue. Cues wait for gaps between combos and are
+    /// dropped if they go stale, so they never talk over a combination.
     func announceCoachingCue(_ message: String, enabled: Bool) {
-        guard enabled else { return }
-        announcementQueue.append(message)
-        processNextAnnouncement()
+        guard enabled, audioEnabled else { return }
+        announcementQueue.append(Announcement(text: message, created: Date()))
+        if announcementQueue.count > 4 { announcementQueue.removeFirst(announcementQueue.count - 4) }
+        guard announcementTask == nil else { return }
+        announcementTask = Task { [weak self] in
+            await self?.drainAnnouncements()
+        }
     }
 
-    private func processNextAnnouncement() {
-        guard !isSpeakingDynamic, !announcementQueue.isEmpty else { return }
-        isSpeakingDynamic = true
-        let next = announcementQueue.removeFirst()
-
-        Task {
-            ensureEngineRunning()
-            if let buf = await renderSpeechToPCMBuffer(text: next, rate: 0.53) {
-                let dur = Double(buf.frameLength) / buf.format.sampleRate
-                playerNode.scheduleBuffer(buf, at: nil, options: [], completionHandler: nil)
-                try? await Task.sleep(nanoseconds: UInt64((dur + 0.15) * 1_000_000_000))
+    private func drainAnnouncements() async {
+        while !Task.isCancelled, !announcementQueue.isEmpty {
+            let item = announcementQueue.removeFirst()
+            // Wait (up to 8 s) for a gap in the combos.
+            var waited = 0.0
+            while isComboSpeaking && waited < 8 && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                waited += 0.1
             }
-            isSpeakingDynamic = false
-            processNextAnnouncement()
+            guard Date().timeIntervalSince(item.created) < 12 else { continue }
+            if let buf = await render(item.text, rate: 0.53, synth: voiceSynth) {
+                await playAndWait([buf], on: voiceNode)
+            }
         }
+        announcementTask = nil
     }
 }

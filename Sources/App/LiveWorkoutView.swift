@@ -1,79 +1,18 @@
 import SwiftUI
 import Charts
-import AudioToolbox
-import ActivityKit
 import UniformTypeIdentifiers
 
 struct LiveWorkoutView: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
-    @EnvironmentObject var healthKit: HealthKitManager
     @EnvironmentObject var navigation: AppNavigation
+    @EnvironmentObject var session: WorkoutSession
     @ScaledMetric(relativeTo: .largeTitle) private var heroBPMSize: CGFloat = 74
-    @StateObject private var audioCoach = AudioCoachEngine()
-
-    @State private var selectedCategory: WorkoutCategory = .muayThai
-    @State private var selectedDrillTag: DrillTag = .technical
-    @State private var rpeScore: Int = 7
-    @State private var workoutNotes: String = ""
-
-    @State private var isRecording = false
-    @State private var startTime: Date?
-    @State private var elapsedSeconds: TimeInterval = 0
-    @State private var samples: [HeartRatePoint] = []
-    @State private var zoneSeconds: [Int: TimeInterval] = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
-    @State private var activeCalories: Double = 0
-    @State private var bmrCalories: Double = 0
-    @State private var timer: Timer?
-
-    @State private var roundTimerEnabled = true
-    @State private var workDurationSeconds = 180
-    @State private var restDurationSeconds = 60
-    @State private var currentRound = 1
-    @State private var isRestPeriod = false
-    @State private var phaseElapsed: TimeInterval = 0
-    @State private var currentRoundStartElapsed: TimeInterval = 0
-    @State private var currentRoundStartStrikes: Int = 0
-    @State private var roundEndPeakBPM: Int = 0
-    @State private var completedRounds: [RoundStat] = []
-
-    @State private var bagConfig = BagCoachConfig()
-
-    private struct PendingRecoveryTracker {
-        let startElapsed: TimeInterval
-        let peakBPM: Int
-        let contextLabel: String
-        var lowestSeenBPM: Int
-    }
-    @State private var pendingRecovery: PendingRecoveryTracker?
-    @State private var autoHRREvents: [AutoHRREvent] = []
-    @State private var latestAutoHRRBanner: String?
-
-    @State private var lthrTestResultBanner: Int?
-
-    @State private var selectedGhost: GhostSession?
-    @State private var showingTCXImporter = false
-
-    @State private var lastAnnouncedZone: Int = 0
-    @State private var lastZone2AlertTime: TimeInterval = -999
-    @State private var lastPeriodicMinute: Int = 0
-    @State private var redlineSecondsAccumulator: TimeInterval = 0
-    @State private var lastRedlineAlertTime: TimeInterval = -999
-    @State private var lastGhostAlertTime: TimeInterval = -999
-    @State private var announced30sWarning = false
-    @State private var announced10sWarning = false
-
-    @State private var currentActivity: Activity<WorkoutActivityAttributes>?
-
-    @State private var activePlan: WorkoutPrescription?
-    @State private var suppressCategoryDefaults = false
-    @State private var lastPlanAlertTime: TimeInterval = -999
-    @State private var showingFinishConfirm = false
-    @State private var liveAlpha1: Double?
 
     @State private var showingDeviceSheet = false
-    @State private var showingPostWorkoutSummary = false
-    @State private var finishedWorkout: SavedWorkout?
+    @State private var showingTCXImporter = false
+    @State private var showingFinishConfirm = false
+    @State private var showingBagSettings = false
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -84,8 +23,10 @@ struct LiveWorkoutView: View {
                 VStack(spacing: 16) {
                     connectionBanner
 
-                    if bleManager.isConnected && bleManager.sensorContactDetected == false {
-                        Label("Poor sensor contact — tighten the band or moisten the sensor", systemImage: "exclamationmark.triangle.fill")
+                    if bleManager.isConnected && (bleManager.sensorContactDetected == false || bleManager.isSignalLost) {
+                        Label(bleManager.isSignalLost ? "No heart-rate signal. Check the sensor is on and touching skin." :
+                                "Poor sensor contact. Tighten the band or moisten the sensor.",
+                              systemImage: "exclamationmark.triangle.fill")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.orange)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -93,96 +34,49 @@ struct LiveWorkoutView: View {
                             .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    if let plan = activePlan {
+                    if let plan = session.activePlan {
                         planBanner(plan)
                     }
 
-                    if let lthr = lthrTestResultBanner {
+                    if let lthr = session.lthrTestResultBanner {
                         lthrSuccessBanner(lthr: lthr)
                     }
 
-                    if let autoBanner = latestAutoHRRBanner {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.down.heart.fill")
-                                .foregroundStyle(.cyan)
-                            Text(autoBanner)
-                                .font(.caption.weight(.bold))
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
+                    if let autoBanner = session.latestAutoHRRBanner, session.isRecording {
+                        Label(autoBanner, systemImage: "arrow.down.heart.fill")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.cyan)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    VStack(spacing: 10) {
-                        HStack {
-                            Label(profile.name, systemImage: "figure.boxing")
-                                .font(.caption.weight(.bold))
-                                .foregroundStyle(.cyan)
-                            Spacer()
-                            Text(selectedCategory.timerModeHint)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                    setupCard(profile: profile)
 
-                        if !isRecording {
-                            HStack {
-                                Picker("Discipline", selection: $selectedCategory) {
-                                    ForEach(WorkoutCategory.allCases) { cat in
-                                        Label(cat.rawValue, systemImage: cat.icon).tag(cat)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .onChange(of: selectedCategory) { _, newCat in
-                                    if suppressCategoryDefaults {
-                                        suppressCategoryDefaults = false
-                                        return
-                                    }
-                                    applyDisciplineDefaults(newCat)
-                                }
+                    heroBPMCard(currentZone: currentZone, profile: profile)
 
-                                Spacer()
-
-                                Picker("Drill Tag", selection: $selectedDrillTag) {
-                                    ForEach(DrillTag.allCases) { tag in
-                                        Text(tag.rawValue).tag(tag)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                            }
-                        } else {
-                            HStack {
-                                Label(selectedCategory.rawValue, systemImage: selectedCategory.icon)
-                                    .font(.subheadline.weight(.bold))
-                                    .foregroundStyle(.orange)
-                                Spacer()
-                                Text(selectedDrillTag.rawValue)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                    .padding(12)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-
-                    heroBPMCard(currentZone: currentZone)
-
-                    if selectedCategory == .lthrTest {
+                    if session.selectedCategory == .lthrTest {
                         lthrFieldTestCard
                     }
 
-                    if selectedCategory != .walk && selectedCategory != .lthrTest && (!isRecording || bagConfig.enabled) {
-                        guidedBagCoachCard
+                    if session.bagEnabled && session.isRecording {
+                        BagComboCard(audio: session.audio, round: session.currentRound,
+                                     totalRounds: session.totalBagRounds, isComplete: session.bagSessionComplete)
                     }
 
-                    if selectedCategory != .lthrTest && (!isRecording || roundTimerEnabled) {
+                    if bagAvailable && !session.isRecording {
+                        bagSetupCard
+                    }
+
+                    if session.selectedCategory != .lthrTest && (!session.isRecording || session.roundTimerEnabled) {
                         roundBellCard
                     }
 
-                    if !isRecording || selectedGhost != nil {
+                    if !session.isRecording || session.selectedGhost != nil {
                         ghostSimulatorCard
                     }
 
-                    liveSparklineCard
+                    liveSparklineCard(profile: profile)
 
                     controlButtons
                 }
@@ -194,7 +88,7 @@ struct LiveWorkoutView: View {
                     Button {
                         showingDeviceSheet = true
                     } label: {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
+                        Label("Sensors", systemImage: "antenna.radiowaves.left.and.right")
                     }
                 }
             }
@@ -202,25 +96,50 @@ struct LiveWorkoutView: View {
                 DeviceScannerSheet()
                     .presentationDetents([.medium, .large])
             }
-            .confirmationDialog("Finish workout?", isPresented: $showingFinishConfirm, titleVisibility: .visible) {
-                Button("Save Workout") { finishAndSaveWorkout() }
-                Button("Discard Workout", role: .destructive) { discardWorkout() }
+            .sheet(isPresented: $showingBagSettings) {
+                BagSettingsSheet(prefs: $session.bagPrefs)
+            }
+            .confirmationDialog(session.bagSessionComplete ? "Bag session complete" : "Finish workout?",
+                                isPresented: $showingFinishConfirm, titleVisibility: .visible) {
+                Button("Save Workout") { session.finishAndSave() }
+                Button("Discard Workout", role: .destructive) { session.discard() }
                 Button("Keep Going", role: .cancel) {}
             } message: {
-                Text("\(formatDuration(elapsedSeconds)) recorded")
+                Text("\(formatDuration(session.elapsedSeconds)) recorded")
             }
-            .onAppear { applyPendingPrescription() }
-            .onChange(of: navigation.pendingPrescription) { _, _ in applyPendingPrescription() }
-            .sensoryFeedback(.impact(weight: .heavy), trigger: currentRound)
-            .sensoryFeedback(.warning, trigger: isRestPeriod)
-            .sensoryFeedback(.start, trigger: isRecording)
-            .sheet(isPresented: $showingPostWorkoutSummary) {
-                if let workout = finishedWorkout {
+            .alert("Recover unfinished workout?", isPresented: Binding(
+                get: { session.recoverableDraft != nil },
+                set: { if !$0 && session.recoverableDraft != nil { session.resolveRecoveredDraft(save: false) } }
+            )) {
+                Button("Save It") { session.resolveRecoveredDraft(save: true) }
+                Button("Discard", role: .destructive) { session.resolveRecoveredDraft(save: false) }
+            } message: {
+                if let d = session.recoverableDraft {
+                    Text("A \(d.category.rawValue) session from \(d.startTime.formatted(date: .abbreviated, time: .shortened)) (\(formatDuration(d.elapsedSeconds))) was interrupted.")
+                }
+            }
+            .onAppear {
+                session.syncFromProfile()
+                applyPending()
+            }
+            .onChange(of: navigation.pendingPrescription) { _, _ in applyPending() }
+            .onChange(of: workoutStore.activeProfileID) { _, _ in session.syncFromProfile() }
+            .onChange(of: session.requestFinishPrompt) { _, wants in
+                if wants {
+                    showingFinishConfirm = true
+                    session.requestFinishPrompt = false
+                }
+            }
+            .sensoryFeedback(.impact(weight: .heavy), trigger: session.currentRound)
+            .sensoryFeedback(.warning, trigger: session.isRestPeriod)
+            .sensoryFeedback(.start, trigger: session.isRecording)
+            .sheet(isPresented: $session.showingSummary) {
+                if let workout = session.finishedWorkout {
                     NavigationStack {
                         WorkoutDetailView(workout: workout)
                             .toolbar {
                                 ToolbarItem(placement: .topBarTrailing) {
-                                    Button("Done") { showingPostWorkoutSummary = false }
+                                    Button("Done") { session.showingSummary = false }
                                 }
                             }
                     }
@@ -231,39 +150,32 @@ struct LiveWorkoutView: View {
                 allowedContentTypes: [UTType(filenameExtension: "tcx") ?? .xml, .xml],
                 allowsMultipleSelection: false
             ) { result in
-                if case .success(let urls) = result, let url = urls.first {
-                    if let imported = workoutStore.importTCXGhost(from: url) {
-                        selectedGhost = imported
-                    }
+                if case .success(let urls) = result, let url = urls.first,
+                   let imported = workoutStore.importTCXGhost(from: url) {
+                    session.selectedGhost = imported
                 }
             }
         }
     }
 
-    private func applyDisciplineDefaults(_ category: WorkoutCategory) {
-        roundTimerEnabled = category.usesRoundTimerByDefault
-        workDurationSeconds = category.defaultWorkSeconds
-        restDurationSeconds = category.defaultRestSeconds
-
-        if category == .lthrTest {
-            selectedDrillTag = .lthrProtocol
-            bagConfig.enabled = false
-        } else if category == .walk || category == .roadwork {
-            selectedDrillTag = .aerobicZ2
-            bagConfig.enabled = false
-        } else if category == .heavyBag {
-            selectedDrillTag = .bagWork
-        } else if category == .sparring {
-            selectedDrillTag = .hardSparring
-        }
+    private var bagAvailable: Bool {
+        session.selectedCategory != .walk && session.selectedCategory != .lthrTest && session.selectedCategory != .roadwork
     }
+
+    private func applyPending() {
+        guard let p = navigation.pendingPrescription, !session.isRecording else { return }
+        navigation.pendingPrescription = nil
+        session.apply(p)
+    }
+
+    // MARK: Banners
 
     private var connectionBanner: some View {
         HStack(spacing: 12) {
             Circle()
-                .fill(bleManager.isConnected ? Color.green : Color.orange)
+                .fill(bleManager.isConnected ? (bleManager.isSignalLost ? Color.orange : Color.green) : Color.orange)
                 .frame(width: 10, height: 10)
-
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(bleManager.isConnected ? bleManager.connectedDeviceName : "Sensor Not Connected")
                     .font(.subheadline.weight(.semibold))
@@ -271,15 +183,12 @@ struct LiveWorkoutView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
             Spacer()
-
             if let battery = bleManager.batteryLevel {
-                Label("\(battery)%", systemImage: "battery.75")
+                Label("\(battery)%", systemImage: battery > 20 ? "battery.75" : "battery.25")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(battery > 20 ? .green : .orange)
             }
-
             Button(bleManager.isConnected ? "Change" : "Connect") {
                 showingDeviceSheet = true
             }
@@ -288,1008 +197,6 @@ struct LiveWorkoutView: View {
         }
         .padding(12)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    private func heroBPMCard(currentZone: HeartRateZoneInfo) -> some View {
-        let totalCalories = activeCalories + bmrCalories
-
-        return VStack(spacing: 12) {
-            HStack {
-                Text(currentZone.name.uppercased())
-                    .font(.caption.weight(.heavy))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background(currentZone.color.opacity(0.22), in: Capsule())
-                    .foregroundStyle(currentZone.color)
-
-                Spacer()
-
-                if let pending = pendingRecovery {
-                    let remain = max(0, 60 - Int(elapsedSeconds - pending.startElapsed))
-                    Label("Auto HRR: \(remain)s", systemImage: "arrow.down.heart.fill")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.cyan.opacity(0.2), in: Capsule())
-                        .foregroundStyle(.cyan)
-                }
-            }
-
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Image(systemName: "heart.fill")
-                    .font(.system(size: heroBPMSize * 0.43))
-                    .foregroundStyle(bleManager.currentBPM > 0 ? currentZone.color : .secondary)
-                    .symbolEffect(.pulse, isActive: bleManager.currentBPM > 0)
-
-                Text(bleManager.currentBPM > 0 ? "\(bleManager.currentBPM)" : "--")
-                    .font(.system(size: heroBPMSize, weight: .heavy, design: .rounded))
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .animation(.default, value: bleManager.currentBPM)
-                    .minimumScaleFactor(0.6)
-                    .lineLimit(1)
-
-                Text("BPM")
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(bleManager.currentBPM > 0 ? "Heart rate \(bleManager.currentBPM) beats per minute, \(currentZone.name)" : "No heart rate signal")
-
-            zoneBar(bpm: bleManager.currentBPM, profile: workoutStore.activeProfile)
-
-            if isRecording, let a = liveAlpha1 {
-                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
-                      systemImage: "waveform.path.ecg")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(a >= 0.75 ? .green : .orange)
-            }
-
-            HStack(spacing: 12) {
-                VStack(spacing: 2) {
-                    Text("ELAPSED")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text(formatDuration(elapsedSeconds))
-                        .font(.headline.monospacedDigit())
-                }
-                .frame(maxWidth: .infinity)
-
-                Divider().frame(height: 28)
-
-                VStack(spacing: 2) {
-                    Text("ACTIVE KCAL")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.orange)
-                    Text("\(Int(activeCalories))")
-                        .font(.headline.monospacedDigit())
-                        .foregroundStyle(.orange)
-                }
-                .frame(maxWidth: .infinity)
-
-                Divider().frame(height: 28)
-
-                VStack(spacing: 2) {
-                    Text("TOTAL (+BMR)")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text("\(Int(totalCalories))")
-                        .font(.headline.monospacedDigit())
-                }
-                .frame(maxWidth: .infinity)
-
-                Divider().frame(height: 28)
-
-                VStack(spacing: 2) {
-                    Text("AVG / MAX")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.secondary)
-                    Text("\(liveAverageBPM)/\(liveMaxBPM)")
-                        .font(.headline.monospacedDigit())
-                }
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .padding(16)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
-    }
-
-    private var lthrFieldTestCard: some View {
-        let warmupRemaining = max(0, 600 - Int(elapsedSeconds))
-        let trialElapsed = max(0, Int(elapsedSeconds) - 600)
-        let trialRemaining = max(0, 1200 - trialElapsed)
-        let rollingTrialSamples = samples.filter { $0.elapsedSeconds >= 600 && $0.elapsedSeconds <= 1800 }
-        let rollingLTHR = rollingTrialSamples.isEmpty ? 0 : rollingTrialSamples.map(\.bpm).reduce(0, +) / rollingTrialSamples.count
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("30-MIN LTHR FIELD TEST PROTOCOL", systemImage: "waveform.path.ecg")
-                    .font(.caption.weight(.heavy))
-                    .foregroundStyle(.orange)
-                Spacer()
-                if isRecording {
-                    Text(elapsedSeconds < 600 ? "PHASE 1: WARM-UP" : "PHASE 2: 20M TRIAL")
-                        .font(.caption2.weight(.heavy))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.orange.opacity(0.25), in: Capsule())
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            Text("10:00 progressive warm-up → 20:00 maximum sustainable pace. Average BPM of the final 20 minutes sets your exact Lactate Threshold HR & 5 zones automatically.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if isRecording {
-                HStack {
-                    if elapsedSeconds < 600 {
-                        Text("Warm-Up Left: \(formatDuration(TimeInterval(warmupRemaining)))")
-                            .font(.subheadline.weight(.bold).monospacedDigit())
-                    } else {
-                        Text("Trial Left: \(formatDuration(TimeInterval(trialRemaining)))")
-                            .font(.subheadline.weight(.bold).monospacedDigit())
-                            .foregroundStyle(.orange)
-                        Spacer()
-                        Text("Live 20m LTHR: \(rollingLTHR > 0 ? "\(rollingLTHR) BPM" : "--")")
-                            .font(.subheadline.weight(.heavy).monospacedDigit())
-                            .foregroundStyle(.cyan)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func lthrSuccessBanner(lthr: Int) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.title3)
-                .foregroundStyle(.green)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("LTHR Updated Automatically: \(lthr) BPM")
-                    .font(.subheadline.weight(.bold))
-                Text("Fighter zones switched to Lactate Threshold (LTHR %) model.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("OK") { lthrTestResultBanner = nil }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-        }
-        .padding(12)
-        .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
-    }
-
-    private var guidedBagCoachCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Toggle(isOn: $bagConfig.enabled) {
-                    Label("Coached Bag Work & Tempo Metronome", systemImage: "metronome.fill")
-                        .font(.subheadline.weight(.bold))
-                }
-                .tint(.orange)
-                .onChange(of: bagConfig.enabled) { _, enabled in
-                    if enabled {
-                        roundTimerEnabled = true
-                        workDurationSeconds = bagConfig.workSeconds
-                        restDurationSeconds = bagConfig.restSeconds
-                        if isRecording {
-                            startBagEngine()
-                        }
-                    } else {
-                        audioCoach.stopBagCoachLoop()
-                    }
-                }
-            }
-
-            if bagConfig.enabled {
-                if isRecording {
-                    VStack(spacing: 6) {
-                        Text(audioCoach.currentComboDisplay.isEmpty ? "READY — HANDS UP" : audioCoach.currentComboDisplay)
-                            .font(.headline.weight(.heavy))
-                            .foregroundStyle(.orange)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
-                            .background(Color.orange.opacity(0.14), in: RoundedRectangle(cornerRadius: 10))
-
-                        HStack {
-                            Text("Strikes Cued: \(audioCoach.strikesCuedCount)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text("Music-Safe Audio (.mixWithOthers)")
-                                .font(.caption2)
-                                .foregroundStyle(.green)
-                        }
-                    }
-                } else {
-                    HStack {
-                        Button("30m • 3×1m Steady") {
-                            bagConfig.totalMinutes = 30
-                            bagConfig.workSeconds = 180
-                            bagConfig.restSeconds = 60
-                            bagConfig.tempo = .steady
-                            workDurationSeconds = 180
-                            restDurationSeconds = 60
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-
-                        Button("15m • 3×1m Fight Pace") {
-                            bagConfig.totalMinutes = 15
-                            bagConfig.workSeconds = 180
-                            bagConfig.restSeconds = 60
-                            bagConfig.tempo = .fightPace
-                            workDurationSeconds = 180
-                            restDurationSeconds = 60
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.mini)
-
-                        Spacer()
-                        Text("~\(bagConfig.estimatedTotalRounds) rds")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(.orange)
-                    }
-
-                    HStack {
-                        Picker("Audio", selection: $bagConfig.mode) {
-                            ForEach(BagCoachMode.allCases) { m in
-                                Text(m.rawValue).tag(m)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        Spacer()
-
-                        Picker("Tempo", selection: $bagConfig.tempo) {
-                            ForEach(BagTempo.allCases) { t in
-                                Text(t.rawValue).tag(t)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-
-                    HStack(spacing: 12) {
-                        Picker("Total", selection: $bagConfig.totalMinutes) {
-                            ForEach([10, 15, 20, 30, 45, 60], id: \.self) { m in
-                                Text("\(m) min").tag(m)
-                            }
-                        }
-                        .pickerStyle(.menu)
-
-                        Toggle("Kicks", isOn: $bagConfig.includeKicks)
-                            .toggleStyle(.button)
-                            .controlSize(.mini)
-                        Toggle("Knees/Elbows", isOn: $bagConfig.includeKneesElbows)
-                            .toggleStyle(.button)
-                            .controlSize(.mini)
-                        Toggle("Defense", isOn: $bagConfig.includeDefense)
-                            .toggleStyle(.button)
-                            .controlSize(.mini)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var roundBellCard: some View {
-        let phaseTarget = isRestPeriod ? TimeInterval(restDurationSeconds) : TimeInterval(workDurationSeconds)
-        let remaining = max(0, phaseTarget - phaseElapsed)
-
-        return VStack(spacing: 10) {
-            HStack {
-                Toggle(isOn: $roundTimerEnabled) {
-                    Label("Round Bell & Corner Timer", systemImage: "bell.fill")
-                        .font(.subheadline.weight(.bold))
-                }
-                .tint(.orange)
-            }
-
-            if roundTimerEnabled {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(isRestPeriod ? "ROUND \(currentRound) • STOOL REST" : "ROUND \(currentRound) • WORK")
-                            .font(.caption.weight(.heavy))
-                            .foregroundStyle(isRestPeriod ? .cyan : .orange)
-                        Text(formatDuration(remaining))
-                            .font(.system(size: 34, weight: .heavy, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(isRestPeriod ? .cyan : .primary)
-                    }
-                    Spacer()
-
-                    if !isRecording {
-                        VStack(alignment: .trailing, spacing: 6) {
-                            Picker("Work", selection: $workDurationSeconds) {
-                                Text("0:30 Work").tag(30)
-                                Text("1:00 Work").tag(60)
-                                Text("1:30 Work").tag(90)
-                                Text("2:00 Work").tag(120)
-                                Text("3:00 Work").tag(180)
-                                Text("4:00 Work").tag(240)
-                                Text("5:00 Work").tag(300)
-                            }
-                            .pickerStyle(.menu)
-
-                            Picker("Rest", selection: $restDurationSeconds) {
-                                Text("0:15 Rest").tag(15)
-                                Text("0:30 Rest").tag(30)
-                                Text("0:45 Rest").tag(45)
-                                Text("1:00 Rest").tag(60)
-                                Text("1:30 Rest").tag(90)
-                                Text("2:00 Rest").tag(120)
-                            }
-                            .pickerStyle(.menu)
-                        }
-                    } else if !isRestPeriod {
-                        Button("End Round") {
-                            transitionToRestPeriod()
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var ghostSimulatorCard: some View {
-        let availableGhosts = workoutStore.allAvailableGhosts()
-        let ghostBPM = selectedGhost?.interpolatedBPM(at: elapsedSeconds)
-        let delta: Int? = (bleManager.currentBPM > 0 && ghostBPM != nil) ? (bleManager.currentBPM - ghostBPM!) : nil
-
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Label("Opponent Pace Simulator (Ghost)", systemImage: "figure.run.square.stack.fill")
-                    .font(.subheadline.weight(.bold))
-                Spacer()
-                if !isRecording {
-                    Button {
-                        showingTCXImporter = true
-                    } label: {
-                        Label("Import .TCX", systemImage: "doc.badge.plus")
-                            .font(.caption.weight(.semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.mini)
-                }
-            }
-
-            if !isRecording {
-                Picker("Ghost Session", selection: $selectedGhost) {
-                    Text("None (Solo Session)").tag(Optional<GhostSession>.none)
-                    ForEach(availableGhosts) { g in
-                        Text(g.title).tag(Optional(g))
-                    }
-                }
-                .pickerStyle(.menu)
-            } else if let ghost = selectedGhost {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(ghost.title)
-                            .font(.caption.weight(.bold))
-                        Text("Ghost BPM: \(ghostBPM != nil ? "\(ghostBPM!)" : "Finished")")
-                            .font(.caption2)
-                            .foregroundStyle(.purple)
-                    }
-                    Spacer()
-                    if let d = delta {
-                        Text(d <= 0 ? "\(d) BPM (More Efficient)" : "+\(d) BPM (Higher Strain)")
-                            .font(.caption.weight(.heavy))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background((d <= 0 ? Color.green : Color.orange).opacity(0.2), in: Capsule())
-                            .foregroundStyle(d <= 0 ? .green : .orange)
-                    }
-                }
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var liveSparklineCard: some View {
-        let recent = Array(samples.suffix(120))
-        let zones = workoutStore.activeProfile.activeZones
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("REAL-TIME HEART RATE TRACE")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if selectedGhost != nil {
-                    Text("Purple = Ghost")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.purple)
-                }
-            }
-
-            if recent.count >= 2 {
-                Chart {
-                    RuleMark(y: .value("Z2", zones.z2Max))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .foregroundStyle(.green.opacity(0.4))
-
-                    RuleMark(y: .value("Threshold", zones.z4Max))
-                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
-                        .foregroundStyle(.orange.opacity(0.5))
-
-                    ForEach(recent) { pt in
-                        LineMark(
-                            x: .value("Time", pt.elapsedSeconds),
-                            y: .value("BPM", pt.bpm)
-                        )
-                        .foregroundStyle(by: .value("Series", "Live"))
-                        .lineStyle(StrokeStyle(lineWidth: 2.5))
-                    }
-
-                    if let ghost = selectedGhost {
-                        ForEach(recent) { pt in
-                            if let gBPM = ghost.interpolatedBPM(at: pt.elapsedSeconds) {
-                                LineMark(
-                                    x: .value("Time", pt.elapsedSeconds),
-                                    y: .value("BPM", gBPM)
-                                )
-                                .foregroundStyle(by: .value("Series", "Ghost"))
-                                .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
-                            }
-                        }
-                    }
-                }
-                .chartForegroundStyleScale([
-                    "Live": Color.red,
-                    "Ghost": Color.purple.opacity(0.8)
-                ])
-                .chartLegend(.hidden)
-                .chartYScale(domain: 55...210)
-                .chartXAxis(.hidden)
-                .frame(height: 130)
-            } else {
-                Text("Start workout to stream live heart rate graph")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 95)
-            }
-        }
-        .padding(14)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var controlButtons: some View {
-        VStack(spacing: 10) {
-            if !isRecording {
-                Button {
-                    startWorkout()
-                } label: {
-                    Label(selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start Workout", systemImage: "play.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(.green)
-            } else {
-                HStack(spacing: 12) {
-                    Picker("RPE", selection: $rpeScore) {
-                        ForEach(1...10, id: \.self) { val in
-                            Text("RPE \(val)/10").tag(val)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-
-                    TextField("Corner note...", text: $workoutNotes)
-                        .textFieldStyle(.roundedBorder)
-                }
-
-                Button(role: .destructive) {
-                    showingFinishConfirm = true
-                } label: {
-                    Label("Finish & Save Workout", systemImage: "stop.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-    }
-
-    private var liveAverageBPM: Int {
-        guard !samples.isEmpty else { return bleManager.currentBPM }
-        return samples.map(\.bpm).reduce(0, +) / samples.count
-    }
-
-    private var liveMaxBPM: Int {
-        samples.map(\.bpm).max() ?? bleManager.currentBPM
-    }
-
-    private func startWorkout() {
-        samples.removeAll()
-        zoneSeconds = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
-        activeCalories = 0
-        bmrCalories = 0
-        elapsedSeconds = 0
-        currentRound = 1
-        isRestPeriod = false
-        phaseElapsed = 0
-        currentRoundStartElapsed = 0
-        currentRoundStartStrikes = 0
-        roundEndPeakBPM = 0
-        completedRounds.removeAll()
-        pendingRecovery = nil
-        autoHRREvents.removeAll()
-        latestAutoHRRBanner = nil
-        lthrTestResultBanner = nil
-        lastAnnouncedZone = 0
-        lastZone2AlertTime = -999
-        lastPeriodicMinute = 0
-        redlineSecondsAccumulator = 0
-        lastRedlineAlertTime = -999
-        lastGhostAlertTime = -999
-        announced30sWarning = false
-        announced10sWarning = false
-        audioCoach.strikesCuedCount = 0
-        audioCoach.prepareForWorkout()
-        _ = bleManager.consumeLatestRRIntervals()
-        liveAlpha1 = nil
-        lastPlanAlertTime = -999
-
-        startTime = Date()
-        isRecording = true
-        UIApplication.shared.isIdleTimerDisabled = true
-
-        if roundTimerEnabled || bagConfig.enabled {
-            audioCoach.playBellCue()
-        }
-        if bagConfig.enabled {
-            startBagEngine()
-        }
-
-        startLiveActivity()
-
-        // Added in .common mode so ticks keep firing while the user scrolls
-        // (a plain scheduledTimer pauses during scroll tracking, which made the
-        // round clock and zone-time counters fall behind).
-        let t = Timer(timeInterval: 1.0, repeats: true) { _ in
-            Task { @MainActor in
-                recordSecondTick()
-            }
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
-    }
-
-    private func startBagEngine() {
-        audioCoach.startBagCoachLoop(
-            config: bagConfig,
-            isWorkPhaseProvider: { [self] in !self.roundTimerEnabled || !self.isRestPeriod },
-            roundProgressProvider: { [self] in
-                guard self.roundTimerEnabled, self.workDurationSeconds > 0 else { return 0.5 }
-                return min(1.0, self.phaseElapsed / Double(self.workDurationSeconds))
-            }
-        )
-    }
-
-    private func recordSecondTick() {
-        guard isRecording, let start = startTime else { return }
-        elapsedSeconds = Date().timeIntervalSince(start)
-        let bpm = bleManager.currentBPM
-        let profile = workoutStore.activeProfile
-        let coachCfg = profile.audioCoach
-
-        let calSplit = FighterAnalytics.calculateCalorieBreakdown(bpm: bpm, durationSeconds: 1.0, profile: profile)
-        activeCalories += calSplit.active
-        bmrCalories += calSplit.bmr
-
-        if bpm > 0 {
-            let rr = bleManager.consumeLatestRRIntervals()
-            samples.append(HeartRatePoint(timestamp: Date(), elapsedSeconds: elapsedSeconds, bpm: bpm, rrIntervalsMs: rr))
-            let z = profile.zone(for: bpm)
-            zoneSeconds[z.number, default: 0] += 1.0
-
-            if roundTimerEnabled && !isRestPeriod {
-                roundEndPeakBPM = max(roundEndPeakBPM, bpm)
-            }
-
-            evaluateAutomaticHRR(bpm: bpm, profile: profile)
-            evaluateLiveAudioCoaching(bpm: bpm, zone: z, profile: profile, coachCfg: coachCfg)
-
-            if let plan = activePlan, coachCfg.masterEnabled, elapsedSeconds > 90,
-               elapsedSeconds - lastPlanAlertTime >= 75,
-               bpm > plan.targetHighBPM + 4, !(roundTimerEnabled && isRestPeriod) {
-                lastPlanAlertTime = elapsedSeconds
-                audioCoach.announceCoachingCue("Above plan target. Ease back under \(plan.targetHighBPM).", enabled: true)
-            }
-
-            if Int(elapsedSeconds) % 10 == 0 && samples.count >= 60 {
-                liveAlpha1 = HRVMath.liveAlpha1(recentSamples: Array(samples.suffix(150)))
-            }
-        }
-
-        if roundTimerEnabled {
-            phaseElapsed += 1.0
-            let target = isRestPeriod ? TimeInterval(restDurationSeconds) : TimeInterval(workDurationSeconds)
-            let remain = Int(round(target - phaseElapsed))
-
-            if !isRestPeriod && coachCfg.masterEnabled && coachCfg.announceRoundWarnings {
-                if remain == 30 && !announced30sWarning {
-                    announced30sWarning = true
-                    audioCoach.announceCoachingCue("30 seconds left in Round \(currentRound), heart rate \(bpm)", enabled: true)
-                } else if remain == 10 && !announced10sWarning {
-                    announced10sWarning = true
-                    audioCoach.announceCoachingCue("10 seconds, empty the tank!", enabled: true)
-                }
-            }
-
-            if phaseElapsed >= target {
-                if isRestPeriod {
-                    let stoolDrop: Int? = (roundEndPeakBPM > 0 && bpm > 0) ? max(0, roundEndPeakBPM - bpm) : nil
-                    let roundSamples = samples.filter { $0.elapsedSeconds >= currentRoundStartElapsed && $0.elapsedSeconds <= (elapsedSeconds - TimeInterval(restDurationSeconds)) }
-                    let avgR = roundSamples.isEmpty ? bpm : roundSamples.map(\.bpm).reduce(0, +) / roundSamples.count
-                    let peakR = roundSamples.map(\.bpm).max() ?? roundEndPeakBPM
-                    let roundStrikes = max(0, audioCoach.strikesCuedCount - currentRoundStartStrikes)
-
-                    completedRounds.append(RoundStat(
-                        roundNumber: currentRound,
-                        startElapsed: currentRoundStartElapsed,
-                        endElapsed: elapsedSeconds - TimeInterval(restDurationSeconds),
-                        avgBPM: avgR,
-                        peakBPM: peakR,
-                        stoolDropBPM: stoolDrop,
-                        strikesCued: roundStrikes
-                    ))
-
-                    if let drop = stoolDrop, coachCfg.masterEnabled && coachCfg.announceStoolRecovery {
-                        audioCoach.announceCoachingCue("Stool recovery \(drop) B P M. Round \(currentRound + 1)!", enabled: true)
-                    }
-
-                    currentRound += 1
-                    isRestPeriod = false
-                    phaseElapsed = 0
-                    currentRoundStartElapsed = elapsedSeconds
-                    currentRoundStartStrikes = audioCoach.strikesCuedCount
-                    roundEndPeakBPM = 0
-                    announced30sWarning = false
-                    announced10sWarning = false
-                    audioCoach.playBellCue()
-                } else {
-                    transitionToRestPeriod()
-                }
-            }
-        }
-
-        if selectedCategory == .lthrTest {
-            if Int(elapsedSeconds) == 600 {
-                audioCoach.playBellCue()
-                audioCoach.announceCoachingCue("Warm up complete. Begin 20 minute threshold time trial now!", enabled: true)
-            } else if elapsedSeconds >= 1800 {
-                finishAndSaveWorkout()
-                return
-            }
-        }
-
-        updateLiveActivity()
-    }
-
-    private func transitionToRestPeriod() {
-        isRestPeriod = true
-        phaseElapsed = 0
-        announced30sWarning = false
-        announced10sWarning = false
-        audioCoach.playBellCue()
-
-        let peak = max(roundEndPeakBPM, bleManager.currentBPM)
-        if peak > 90 {
-            pendingRecovery = PendingRecoveryTracker(
-                startElapsed: elapsedSeconds,
-                peakBPM: peak,
-                contextLabel: "Round \(currentRound) Stool Rest",
-                lowestSeenBPM: peak
-            )
-        }
-    }
-
-    private func evaluateAutomaticHRR(bpm: Int, profile: AthleteProfile) {
-        let highEffortThreshold = Int(Double(profile.effectiveMaxHR) * 0.80)
-
-        if var tracker = pendingRecovery {
-            tracker.lowestSeenBPM = min(tracker.lowestSeenBPM, bpm)
-            if !isRestPeriod && bpm > tracker.peakBPM + 3 {
-                pendingRecovery = nil
-                return
-            }
-            pendingRecovery = tracker
-
-            if elapsedSeconds - tracker.startElapsed >= 60.0 {
-                let drop = max(0, tracker.peakBPM - bpm)
-                if drop >= 8 {
-                    let event = AutoHRREvent(
-                        elapsedSeconds: elapsedSeconds,
-                        peakBPM: tracker.peakBPM,
-                        recovery60BPM: bpm,
-                        dropBPM: drop,
-                        contextLabel: tracker.contextLabel
-                    )
-                    autoHRREvents.append(event)
-                    latestAutoHRRBanner = "Auto HRR-60 Detected: -\(drop) BPM (\(tracker.peakBPM) → \(bpm) BPM)"
-                }
-                pendingRecovery = nil
-            }
-        } else if !roundTimerEnabled && bpm >= highEffortThreshold {
-            if samples.count >= 12 {
-                let recent10 = samples.suffix(10).map(\.bpm)
-                if let localPeak = recent10.max(), localPeak >= highEffortThreshold && (localPeak - bpm) >= 5 {
-                    pendingRecovery = PendingRecoveryTracker(
-                        startElapsed: elapsedSeconds,
-                        peakBPM: localPeak,
-                        contextLabel: "Mid-Session Recovery",
-                        lowestSeenBPM: bpm
-                    )
-                }
-            }
-        }
-    }
-
-    private func evaluateLiveAudioCoaching(bpm: Int, zone: HeartRateZoneInfo, profile: AthleteProfile, coachCfg: AudioCoachSettings) {
-        guard coachCfg.masterEnabled else { return }
-
-        if coachCfg.zone2CeilingAlert && (selectedCategory == .roadwork || selectedDrillTag == .aerobicZ2) {
-            let z2Max = profile.activeZones.z2Max
-            if bpm > z2Max && (elapsedSeconds - lastZone2AlertTime) >= 45 {
-                lastZone2AlertTime = elapsedSeconds
-                audioCoach.announceCoachingCue("Zone 2 ceiling reached at \(bpm) B P M, ease pace.", enabled: true)
-            }
-        }
-
-        if coachCfg.announceZoneCrossings && zone.number != lastAnnouncedZone && elapsedSeconds > 15 {
-            if zone.number >= 3 {
-                audioCoach.announceCoachingCue("Entering \(zone.name), \(bpm) B P M.", enabled: true)
-            }
-            lastAnnouncedZone = zone.number
-        } else if lastAnnouncedZone == 0 {
-            lastAnnouncedZone = zone.number
-        }
-
-        let redlineCutoff = Int(Double(profile.effectiveMaxHR) * 0.92)
-        if bpm >= redlineCutoff {
-            redlineSecondsAccumulator += 1
-            if coachCfg.announceRedlineWarning && redlineSecondsAccumulator >= 45 && (elapsedSeconds - lastRedlineAlertTime) >= 90 {
-                lastRedlineAlertTime = elapsedSeconds
-                audioCoach.announceCoachingCue("Sustained redline warning, heart rate \(bpm).", enabled: true)
-            }
-        } else {
-            redlineSecondsAccumulator = 0
-        }
-
-        if coachCfg.announceGhostDelta, let ghost = selectedGhost, let gBPM = ghost.interpolatedBPM(at: elapsedSeconds), (elapsedSeconds - lastGhostAlertTime) >= 75 {
-            let diff = bpm - gBPM
-            if abs(diff) >= 8 {
-                lastGhostAlertTime = elapsedSeconds
-                if diff > 0 {
-                    audioCoach.announceCoachingCue("Ghost pace check: \(diff) B P M higher than opponent.", enabled: true)
-                } else {
-                    audioCoach.announceCoachingCue("Ghost pace check: \(abs(diff)) B P M more efficient than opponent.", enabled: true)
-                }
-            }
-        }
-
-        if coachCfg.periodicMinutes > 0 {
-            let currentMinute = Int(elapsedSeconds) / 60
-            if currentMinute > 0 && currentMinute != lastPeriodicMinute && (currentMinute % coachCfg.periodicMinutes == 0) {
-                lastPeriodicMinute = currentMinute
-                audioCoach.announceCoachingCue("\(currentMinute) minutes elapsed, heart rate \(bpm), \(zone.shortName).", enabled: true)
-            }
-        }
-    }
-
-    private func finishAndSaveWorkout() {
-        timer?.invalidate()
-        timer = nil
-        audioCoach.stopBagCoachLoop()
-        audioCoach.shutdownAudio()
-        isRecording = false
-        UIApplication.shared.isIdleTimerDisabled = false
-        endLiveActivity()
-
-        let end = Date()
-        let start = startTime ?? end.addingTimeInterval(-elapsedSeconds)
-        let profile = workoutStore.activeProfile
-        let bpms = samples.map(\.bpm)
-        let avgBPM = bpms.isEmpty ? bleManager.currentBPM : (bpms.reduce(0, +) / bpms.count)
-        let maxBPM = bpms.max() ?? avgBPM
-        let minBPM = bpms.min() ?? avgBPM
-
-        if selectedCategory == .lthrTest {
-            let trialSamples = samples.filter { $0.elapsedSeconds >= 600 }
-            let source = trialSamples.count >= 30 ? trialSamples : samples
-            if !source.isEmpty {
-                let computedLTHR = source.map(\.bpm).reduce(0, +) / source.count
-                var updatedProfile = profile
-                updatedProfile.lactateThresholdHR = computedLTHR
-                updatedProfile.zoneMethod = .lactateThreshold
-                updatedProfile.sanitize()
-                workoutStore.activeProfile = updatedProfile
-                lthrTestResultBanner = computedLTHR
-            }
-        }
-
-        let bestHRR = autoHRREvents.map(\.dropBPM).max()
-        let trimp = FighterAnalytics.calculateTRIMP(samples: samples, profile: profile)
-        let drift = FighterAnalytics.calculateCardiacDrift(samples: samples)
-        let rmssd = FighterAnalytics.calculateRMSSD(samples: samples)
-        let epoc = FighterAnalytics.calculateEPOC(zoneSeconds: zoneSeconds, weightKg: profile.weightKg)
-        let pois = FighterAnalytics.detectPointsOfInterest(
-            samples: samples,
-            roundStats: completedRounds,
-            autoHRREvents: autoHRREvents,
-            profile: profile
-        )
-
-        var ghostAvgDelta: Double?
-        if let ghost = selectedGhost, !samples.isEmpty {
-            let deltas = samples.compactMap { pt -> Double? in
-                guard let g = ghost.interpolatedBPM(at: pt.elapsedSeconds) else { return nil }
-                return Double(pt.bpm - g)
-            }
-            if !deltas.isEmpty {
-                ghostAvgDelta = deltas.reduce(0, +) / Double(deltas.count)
-            }
-        }
-
-        let saved = SavedWorkout(
-            id: UUID(),
-            profileID: profile.id,
-            profileName: profile.name,
-            category: selectedCategory,
-            drillTag: selectedDrillTag,
-            rpe: rpeScore,
-            notes: workoutNotes.trimmingCharacters(in: .whitespacesAndNewlines),
-            startDate: start,
-            endDate: end,
-            duration: elapsedSeconds,
-            averageBPM: avgBPM,
-            maxBPM: maxBPM,
-            minBPM: minBPM,
-            activeCalories: activeCalories,
-            bmrCalories: bmrCalories,
-            calories: activeCalories + bmrCalories,
-            epocBonusCalories: epoc,
-            trimpScore: trimp,
-            cardiacDriftPercent: drift,
-            hrr60Drop: bestHRR,
-            autoHRREvents: autoHRREvents,
-            rmssdMs: rmssd,
-            strikesCuedCount: audioCoach.strikesCuedCount,
-            ghostBaselineName: selectedGhost?.title,
-            ghostAvgDeltaBPM: ghostAvgDelta,
-            zoneSeconds: zoneSeconds,
-            roundStats: completedRounds,
-            pointsOfInterest: pois,
-            samples: samples,
-            isCompressedArchive: false,
-            archiveFileName: nil
-        )
-
-        workoutStore.save(saved)
-        if healthKit.autoSaveEnabled {
-            let hkSamples = saved.samples
-            let sensor = bleManager.sensorInfo
-            Task {
-                await healthKit.save(workout: saved, samples: hkSamples, sensor: sensor)
-            }
-        }
-        finishedWorkout = saved
-        activePlan = nil
-        workoutNotes = ""
-        showingPostWorkoutSummary = true
-    }
-
-    private func startLiveActivity() {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        let profile = workoutStore.activeProfile
-        let attributes = WorkoutActivityAttributes(
-            athleteName: profile.name,
-            discipline: selectedCategory.rawValue
-        )
-        let state = WorkoutActivityAttributes.ContentState(
-            currentBPM: bleManager.currentBPM,
-            zoneNumber: 1,
-            zoneShortName: "Z1",
-            calories: 0,
-            workoutStartDate: Date(),
-            isTimedRound: roundTimerEnabled,
-            roundNumber: 1,
-            isRest: false,
-            phaseEndDate: Date().addingTimeInterval(TimeInterval(workDurationSeconds))
-        )
-        do {
-            currentActivity = try Activity.request(
-                attributes: attributes,
-                content: .init(state: state, staleDate: nil),
-                pushType: nil
-            )
-        } catch {
-            print("Live Activity start failed: \(error)")
-        }
-    }
-
-    private func updateLiveActivity() {
-        guard let activity = currentActivity else { return }
-        let z = workoutStore.activeProfile.zone(for: bleManager.currentBPM)
-        let target = isRestPeriod ? TimeInterval(restDurationSeconds) : TimeInterval(workDurationSeconds)
-        let remain = max(0, target - phaseElapsed)
-
-        let state = WorkoutActivityAttributes.ContentState(
-            currentBPM: bleManager.currentBPM,
-            zoneNumber: z.number,
-            zoneShortName: z.shortName,
-            calories: Int(activeCalories),
-            workoutStartDate: startTime ?? Date(),
-            isTimedRound: roundTimerEnabled,
-            roundNumber: currentRound,
-            isRest: isRestPeriod,
-            phaseEndDate: Date().addingTimeInterval(remain)
-        )
-        Task {
-            await activity.update(.init(state: state, staleDate: nil))
-        }
-    }
-
-    private func endLiveActivity() {
-        guard let activity = currentActivity else { return }
-        Task {
-            await activity.end(nil, dismissalPolicy: .immediate)
-            currentActivity = nil
-        }
-    }
-
-    private func applyPendingPrescription() {
-        guard let p = navigation.pendingPrescription, !isRecording else { return }
-        navigation.pendingPrescription = nil
-        if selectedCategory != p.category {
-            suppressCategoryDefaults = true
-            selectedCategory = p.category
-        }
-        selectedDrillTag = p.drillTag
-        bagConfig.workSeconds = p.workSeconds
-        bagConfig.restSeconds = p.restSeconds
-        bagConfig.tempo = p.bagTempo
-        let totals = [10, 15, 20, 30, 45, 60]
-        bagConfig.totalMinutes = totals.min(by: { abs($0 - p.durationMinutes) < abs($1 - p.durationMinutes) }) ?? 30
-        let noBagCategories: [WorkoutCategory] = [.walk, .roadwork, .lthrTest]
-        let bagAllowed = !noBagCategories.contains(p.category)
-        bagConfig.enabled = p.useBagCoach && bagAllowed
-        roundTimerEnabled = p.roundTimer
-        workDurationSeconds = p.workSeconds
-        restDurationSeconds = p.restSeconds
-        activePlan = p
-    }
-
-    private func discardWorkout() {
-        timer?.invalidate()
-        timer = nil
-        audioCoach.stopBagCoachLoop()
-        audioCoach.shutdownAudio()
-        isRecording = false
-        UIApplication.shared.isIdleTimerDisabled = false
-        endLiveActivity()
-        samples.removeAll()
-        elapsedSeconds = 0
-        liveAlpha1 = nil
-        completedRounds.removeAll()
     }
 
     private func planBanner(_ p: WorkoutPrescription) -> some View {
@@ -1316,13 +223,13 @@ struct LiveWorkoutView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if isRecording {
+            if session.isRecording {
                 Text(status.text)
                     .font(.caption.weight(.bold))
                     .foregroundStyle(status.color)
             } else {
                 Button {
-                    activePlan = nil
+                    session.activePlan = nil
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.secondary)
@@ -1332,6 +239,155 @@ struct LiveWorkoutView: View {
         }
         .padding(12)
         .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func lthrSuccessBanner(lthr: Int) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.title3)
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Lactate threshold updated: \(lthr) BPM")
+                    .font(.subheadline.weight(.bold))
+                Text("Your zones now use the LTHR model.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("OK") { session.lthrTestResultBanner = nil }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(12)
+        .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    // MARK: Setup
+
+    private func setupCard(profile: AthleteProfile) -> some View {
+        VStack(spacing: 10) {
+            HStack {
+                Label(profile.name, systemImage: "figure.boxing")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.cyan)
+                Spacer()
+                Text(session.selectedCategory.timerModeHint)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if !session.isRecording {
+                HStack {
+                    Picker("Discipline", selection: $session.selectedCategory) {
+                        ForEach(WorkoutCategory.allCases) { cat in
+                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    Spacer()
+                    Picker("Drill Tag", selection: $session.selectedDrillTag) {
+                        ForEach(DrillTag.allCases) { tag in
+                            Text(tag.rawValue).tag(tag)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+            } else {
+                HStack {
+                    Label(session.selectedCategory.rawValue, systemImage: session.selectedCategory.icon)
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Text(session.selectedDrillTag.rawValue)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    // MARK: Hero
+
+    private func heroBPMCard(currentZone: HeartRateZoneInfo, profile: AthleteProfile) -> some View {
+        let totalCalories = session.activeCalories + session.bmrCalories
+        let bpm = bleManager.currentBPM
+        return VStack(spacing: 12) {
+            HStack {
+                Text(currentZone.name.uppercased())
+                    .font(.caption.weight(.heavy))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(currentZone.color.opacity(0.22), in: Capsule())
+                    .foregroundStyle(currentZone.color)
+                Spacer()
+                if let remain = session.pendingRecoveryRemaining {
+                    Label("Auto HRR: \(remain)s", systemImage: "arrow.down.heart.fill")
+                        .font(.caption2.weight(.bold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.cyan.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.cyan)
+                }
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "heart.fill")
+                    .font(.system(size: heroBPMSize * 0.43))
+                    .foregroundStyle(bpm > 0 ? currentZone.color : .secondary)
+                    .symbolEffect(.pulse, isActive: bpm > 0)
+                Text(bpm > 0 ? "\(bpm)" : "--")
+                    .font(.system(size: heroBPMSize, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .contentTransition(.numericText())
+                    .animation(.default, value: bpm)
+                    .minimumScaleFactor(0.6)
+                    .lineLimit(1)
+                Text("BPM")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(bpm > 0 ? "Heart rate \(bpm) beats per minute, \(currentZone.name)" : "No heart rate signal")
+
+            zoneBar(bpm: bpm, profile: profile)
+
+            if session.isRecording, let a = session.liveAlpha1 {
+                Label(String(format: "%@ • DFA α1 %.2f", a >= 0.75 ? "Below aerobic threshold" : "Above aerobic threshold", a),
+                      systemImage: "waveform.path.ecg")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(a >= 0.75 ? .green : .orange)
+            }
+
+            HStack(spacing: 12) {
+                stat("ELAPSED", formatDuration(session.elapsedSeconds), .primary)
+                Divider().frame(height: 28)
+                stat("ACTIVE KCAL", "\(Int(session.activeCalories))", .orange)
+                Divider().frame(height: 28)
+                stat("TOTAL KCAL", "\(Int(totalCalories))", .primary)
+                Divider().frame(height: 28)
+                stat("AVG / MAX", "\(session.liveAverageBPM)/\(session.liveMaxBPM)", .primary)
+            }
+        }
+        .padding(16)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func stat(_ title: String, _ value: String, _ color: Color) -> some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(color == .primary ? Color.secondary : color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(value)
+                .font(.headline.monospacedDigit())
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
     }
 
@@ -1354,14 +410,452 @@ struct LiveWorkoutView: View {
         .accessibilityHidden(true)
     }
 
-    private func formatDuration(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds)
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, s)
+    // MARK: LTHR
+
+    private var lthrFieldTestCard: some View {
+        let elapsed = session.elapsedSeconds
+        let warmupRemaining = max(0, 600 - Int(elapsed))
+        let trialRemaining = max(0, 1200 - max(0, Int(elapsed) - 600))
+        let trial = session.samples.filter { $0.elapsedSeconds >= 600 }
+        let rolling = trial.isEmpty ? 0 : trial.map(\.bpm).reduce(0, +) / trial.count
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("30-MIN LTHR FIELD TEST", systemImage: "waveform.path.ecg")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.orange)
+                Spacer()
+                if session.isRecording {
+                    Text(elapsed < 600 ? "PHASE 1: WARM-UP" : "PHASE 2: 20-MIN TRIAL")
+                        .font(.caption2.weight(.heavy))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.25), in: Capsule())
+                        .foregroundStyle(.orange)
+                }
+            }
+            Text("10 min progressive warm-up, then 20 min at your maximum sustainable pace. The average HR of the final 20 minutes sets your lactate threshold and zones automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if session.isRecording {
+                HStack {
+                    if elapsed < 600 {
+                        Text("Warm-up left: \(formatDuration(TimeInterval(warmupRemaining)))")
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                    } else {
+                        Text("Trial left: \(formatDuration(TimeInterval(trialRemaining)))")
+                            .font(.subheadline.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.orange)
+                        Spacer()
+                        Text("Live LTHR: \(rolling > 0 ? "\(rolling)" : "--")")
+                            .font(.subheadline.weight(.heavy).monospacedDigit())
+                            .foregroundStyle(.cyan)
+                    }
+                }
+            }
         }
-        return String(format: "%02d:%02d", m, s)
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Bag setup
+
+    private var bagSetupCard: some View {
+        let prefs = session.bagPrefs
+        return VStack(alignment: .leading, spacing: 10) {
+            Toggle(isOn: $session.bagEnabled) {
+                Label("Coached Bag Work", systemImage: "figure.boxing")
+                    .font(.subheadline.weight(.bold))
+            }
+            .tint(.orange)
+
+            if session.bagEnabled {
+                Text("\(prefs.mode.rawValue) • \(prefs.tempo.rawValue) • \(prefs.stance.rawValue) • \(prefs.difficulty.rawValue)\(prefs.numberCalls ? " • Numbers" : "")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    presetButton("Steady 30", minutes: 30, work: 180, rest: 60, tempo: .steady)
+                    presetButton("Fight Pace 15", minutes: 15, work: 180, rest: 60, tempo: .fightPace)
+                    presetButton("Burnout 10", minutes: 10, work: 60, rest: 30, tempo: .burnout)
+                }
+
+                HStack {
+                    Text("\(prefs.totalMinutes) min • \(prefs.estimatedTotalRounds) rounds of \(formatDuration(TimeInterval(prefs.workSeconds))) / \(formatDuration(TimeInterval(prefs.restSeconds)))")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button {
+                        showingBagSettings = true
+                    } label: {
+                        Label("Settings", systemImage: "slider.horizontal.3")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+
+                BagPreparationStatus(audio: session.audio)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func presetButton(_ title: String, minutes: Int, work: Int, rest: Int, tempo: BagTempo) -> some View {
+        let p = session.bagPrefs
+        let selected = p.totalMinutes == minutes && p.workSeconds == work && p.restSeconds == rest && p.tempo == tempo
+        return Button(title) {
+            var prefs = session.bagPrefs
+            prefs.totalMinutes = minutes
+            prefs.workSeconds = work
+            prefs.restSeconds = rest
+            prefs.tempo = tempo
+            session.bagPrefs = prefs
+        }
+        .buttonStyle(.bordered)
+        .tint(selected ? .orange : .secondary)
+        .controlSize(.small)
+    }
+
+    // MARK: Round bell
+
+    private var roundBellCard: some View {
+        VStack(spacing: 10) {
+            Toggle(isOn: $session.roundTimerEnabled) {
+                Label("Round Bell & Corner Timer", systemImage: "bell.fill")
+                    .font(.subheadline.weight(.bold))
+            }
+            .tint(.orange)
+            .disabled(session.isRecording || session.bagEnabled)
+
+            if session.roundTimerEnabled {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(session.isRestPeriod ? "ROUND \(session.currentRound) • REST" : "ROUND \(session.currentRound)\(session.bagEnabled ? " OF \(session.totalBagRounds)" : "") • WORK")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(session.isRestPeriod ? .cyan : .orange)
+                        Text(formatDuration(session.isRecording ? session.phaseRemaining : session.currentPhaseTarget))
+                            .font(.system(size: 34, weight: .heavy, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(session.isRestPeriod ? .cyan : .primary)
+                    }
+                    Spacer()
+                    if !session.isRecording && !session.bagEnabled {
+                        VStack(alignment: .trailing, spacing: 6) {
+                            Picker("Work", selection: $session.workDurationSeconds) {
+                                ForEach([30, 60, 90, 120, 180, 240, 300], id: \.self) { s in
+                                    Text("\(formatDuration(TimeInterval(s))) work").tag(s)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            Picker("Rest", selection: $session.restDurationSeconds) {
+                                ForEach([15, 30, 45, 60, 90, 120], id: \.self) { s in
+                                    Text("\(formatDuration(TimeInterval(s))) rest").tag(s)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    } else if session.isRecording && !session.isRestPeriod && !session.bagSessionComplete {
+                        Button("End Round") {
+                            session.endWorkPhase(manual: true)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Ghost
+
+    private var ghostSimulatorCard: some View {
+        let ghostBPM = session.selectedGhost?.interpolatedBPM(at: session.elapsedSeconds)
+        let delta: Int? = (bleManager.currentBPM > 0 && ghostBPM != nil) ? bleManager.currentBPM - (ghostBPM ?? 0) : nil
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Ghost Opponent Pace", systemImage: "figure.run.square.stack.fill")
+                    .font(.subheadline.weight(.bold))
+                Spacer()
+                if !session.isRecording {
+                    Button {
+                        showingTCXImporter = true
+                    } label: {
+                        Label("Import .TCX", systemImage: "doc.badge.plus")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
+            }
+            if !session.isRecording {
+                Picker("Ghost Session", selection: $session.selectedGhost) {
+                    Text("None (solo session)").tag(Optional<GhostSession>.none)
+                    ForEach(workoutStore.allAvailableGhosts()) { g in
+                        Text(g.title).tag(Optional(g))
+                    }
+                }
+                .pickerStyle(.menu)
+            } else if let ghost = session.selectedGhost {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ghost.title).font(.caption.weight(.bold))
+                        Text("Ghost BPM: \(ghostBPM.map(String.init) ?? "Finished")")
+                            .font(.caption2)
+                            .foregroundStyle(.purple)
+                    }
+                    Spacer()
+                    if let d = delta {
+                        Text(d <= 0 ? "\(d) BPM (more efficient)" : "+\(d) BPM (higher strain)")
+                            .font(.caption.weight(.heavy))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background((d <= 0 ? Color.green : Color.orange).opacity(0.2), in: Capsule())
+                            .foregroundStyle(d <= 0 ? .green : .orange)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Sparkline
+
+    private func liveSparklineCard(profile: AthleteProfile) -> some View {
+        let recent = Array(session.samples.suffix(120))
+        let zones = profile.activeZones
+        let ghost = session.selectedGhost
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("REAL-TIME HEART RATE")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if ghost != nil {
+                    Text("Purple = Ghost")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.purple)
+                }
+            }
+            if recent.count >= 2 {
+                Chart {
+                    RuleMark(y: .value("Z2", zones.z2Max))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .foregroundStyle(.green.opacity(0.4))
+                    RuleMark(y: .value("Threshold", zones.z4Max))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .foregroundStyle(.orange.opacity(0.5))
+                    ForEach(recent) { pt in
+                        LineMark(x: .value("Time", pt.elapsedSeconds), y: .value("BPM", pt.bpm))
+                            .foregroundStyle(by: .value("Series", "Live"))
+                            .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    }
+                    if let ghost {
+                        ForEach(recent) { pt in
+                            if let g = ghost.interpolatedBPM(at: pt.elapsedSeconds) {
+                                LineMark(x: .value("Time", pt.elapsedSeconds), y: .value("BPM", g))
+                                    .foregroundStyle(by: .value("Series", "Ghost"))
+                                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 3]))
+                            }
+                        }
+                    }
+                }
+                .chartForegroundStyleScale(["Live": Color.red, "Ghost": Color.purple.opacity(0.8)])
+                .chartLegend(.hidden)
+                .chartYScale(domain: 55...210)
+                .chartXAxis(.hidden)
+                .frame(height: 130)
+                .accessibilityLabel("Heart rate over the last two minutes")
+            } else {
+                Text("Start a workout to see your live heart-rate trace")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 95)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: Controls
+
+    private var controlButtons: some View {
+        VStack(spacing: 10) {
+            if !session.isRecording {
+                Button {
+                    session.startWorkout()
+                } label: {
+                    Label(session.selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start Workout", systemImage: "play.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
+                if !bleManager.isConnected {
+                    Text("No sensor connected. You can still record time and rounds.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                TextField("Corner note…", text: $session.workoutNotes)
+                    .textFieldStyle(.roundedBorder)
+                Button(role: .destructive) {
+                    showingFinishConfirm = true
+                } label: {
+                    Label("Finish Workout", systemImage: "stop.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func formatDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded(.down)))
+        let h = total / 3600, m = (total % 3600) / 60, s = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+    }
+}
+
+// MARK: - Bag coach live card
+
+struct BagComboCard: View {
+    @ObservedObject var audio: AudioCoachEngine
+    let round: Int
+    let totalRounds: Int
+    let isComplete: Bool
+
+    var body: some View {
+        VStack(spacing: 12) {
+            HStack {
+                Label("BAG COACH", systemImage: "figure.boxing")
+                    .font(.caption.weight(.heavy))
+                    .foregroundStyle(.orange)
+                Spacer()
+                Text(isComplete ? "COMPLETE" : "Round \(min(round, totalRounds)) / \(totalRounds)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.secondary)
+            }
+
+            Group {
+                if audio.comboTokens.isEmpty {
+                    Text(isComplete ? "SESSION COMPLETE" : (audio.bagStatus.isEmpty ? "READY — HANDS UP" : audio.bagStatus))
+                        .font(.system(.title, design: .rounded).weight(.heavy))
+                        .foregroundStyle(audio.bagStatus.contains("REST") ? .cyan : .orange)
+                        .multilineTextAlignment(.center)
+                } else {
+                    FlowLayout(spacing: 8) {
+                        ForEach(Array(audio.comboTokens.enumerated()), id: \.offset) { i, token in
+                            Text(token)
+                                .font(.system(.title2, design: .rounded).weight(.heavy))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(chipColor(i).opacity(i == audio.activeTokenIndex ? 1 : 0.22), in: RoundedRectangle(cornerRadius: 12))
+                                .foregroundStyle(i == audio.activeTokenIndex ? Color.black : chipColor(i))
+                                .scaleEffect(i == audio.activeTokenIndex ? 1.06 : 1)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 110)
+            .padding(.vertical, 6)
+            .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+            .animation(.spring(duration: 0.25), value: audio.activeTokenIndex)
+            .animation(.easeOut(duration: 0.2), value: audio.comboSerial)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(audio.comboTokens.isEmpty ? audio.bagStatus : audio.comboTokens.joined(separator: ", "))
+
+            HStack {
+                Text("Strikes called: \(audio.strikesCuedCount)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if audio.isPreparingAudio {
+                    ProgressView(value: audio.preparationProgress)
+                        .frame(width: 80)
+                }
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+        .sensoryFeedback(.impact(weight: .light), trigger: audio.comboSerial)
+    }
+
+    private func chipColor(_ i: Int) -> Color {
+        i <= audio.activeTokenIndex ? .orange : .orange.opacity(0.9)
+    }
+}
+
+struct BagPreparationStatus: View {
+    @ObservedObject var audio: AudioCoachEngine
+
+    var body: some View {
+        if audio.isPreparingAudio {
+            HStack(spacing: 8) {
+                ProgressView(value: audio.preparationProgress)
+                Text("Preparing voice…")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        } else if !audio.voiceName.isEmpty {
+            Text("Voice: \(audio.voiceName). Install an Enhanced voice in Settings › Accessibility › Spoken Content for clearer calls.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+/// Wraps children onto multiple lines (combo chips).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, widest: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x > 0 && x + s.width > maxWidth {
+                y += rowHeight + spacing
+                x = 0
+                rowHeight = 0
+            }
+            x += s.width + spacing
+            rowHeight = max(rowHeight, s.height)
+            widest = max(widest, x - spacing)
+        }
+        return CGSize(width: min(widest, maxWidth), height: y + rowHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        // Lay out rows, then centre each row horizontally.
+        var rows: [[(LayoutSubview, CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for v in subviews {
+            let s = v.sizeThatFits(.unspecified)
+            if x > 0 && x + s.width > bounds.width {
+                rows.append([])
+                x = 0
+            }
+            rows[rows.count - 1].append((v, s))
+            x += s.width + spacing
+        }
+        let totalHeight = rows.reduce(CGFloat(0)) { $0 + ($1.map { $0.1.height }.max() ?? 0) } + spacing * CGFloat(max(0, rows.count - 1))
+        var y = bounds.minY + max(0, (bounds.height - totalHeight) / 2)
+        for row in rows {
+            let rowWidth = row.reduce(CGFloat(0)) { $0 + $1.1.width } + spacing * CGFloat(max(0, row.count - 1))
+            let rowHeight = row.map { $0.1.height }.max() ?? 0
+            var rx = bounds.minX + max(0, (bounds.width - rowWidth) / 2)
+            for (v, s) in row {
+                v.place(at: CGPoint(x: rx, y: y + (rowHeight - s.height) / 2), proposal: ProposedViewSize(s))
+                rx += s.width + spacing
+            }
+            y += rowHeight + spacing
+        }
     }
 }

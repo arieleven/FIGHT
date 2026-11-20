@@ -6,6 +6,7 @@ struct FightApp: App {
     @StateObject private var workoutStore = WorkoutStore()
     @StateObject private var healthKit = HealthKitManager()
     @StateObject private var navigation = AppNavigation()
+    @StateObject private var session = WorkoutSession()
 
     var body: some Scene {
         WindowGroup {
@@ -34,6 +35,10 @@ struct FightApp: App {
             .environmentObject(workoutStore)
             .environmentObject(healthKit)
             .environmentObject(navigation)
+            .environmentObject(session)
+            .task {
+                session.bind(ble: bleManager, store: workoutStore, health: healthKit)
+            }
             .preferredColorScheme(.dark)
         }
     }
