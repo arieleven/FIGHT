@@ -10,7 +10,7 @@ struct CoospoLiveActivityBundle: WidgetBundle {
 }
 
 struct CoospoLiveActivityWidget: Widget {
-    var body: some Widget {
+    var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkoutActivityAttributes.self) { context in
             // Lock Screen / Banner Presentation
             HStack(spacing: 14) {
