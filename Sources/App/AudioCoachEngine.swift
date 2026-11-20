@@ -43,6 +43,8 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     @Published private(set) var comboSerial: Int = 0
     @Published private(set) var bagStatus: String = ""
     @Published var strikesCuedCount: Int = 0
+    /// Called after each combo finishes being called (used to measure each combo's HR cost).
+    var onComboPlayed: (@MainActor ([Strike]) -> Void)?
     @Published private(set) var isPreparingAudio = false
     @Published private(set) var preparationProgress: Double = 0
     @Published private(set) var voiceName: String = ""
@@ -319,6 +321,37 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         if let b = tripleBellBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
     }
 
+    /// Soft breathing guide tone: rising pitch = breathe in, falling = breathe out.
+    func playBreathCue(inhale: Bool, seconds: Double) {
+        ensureEngineRunning()
+        if let b = Self.breathTone(rising: inhale, seconds: seconds) {
+            fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil)
+        }
+    }
+
+    private static func breathTone(rising: Bool, seconds: Double) -> AVAudioPCMBuffer? {
+        let sr = 22050.0
+        let length = min(max(seconds, 1), 8)
+        let frames = Int(sr * length)
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: sr, channels: 1),
+              let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
+              let d = buf.floatChannelData?[0] else { return nil }
+        buf.frameLength = AVAudioFrameCount(frames)
+        let f0 = rising ? 220.0 : 330.0
+        let f1 = rising ? 330.0 : 220.0
+        var phase = 0.0
+        for i in 0..<frames {
+            let t = Double(i) / sr
+            let u = t / length
+            let f = f0 + (f1 - f0) * u
+            phase += 2 * .pi * f / sr
+            // Gentle swell in and out.
+            let env = sin(.pi * u) * 0.22
+            d[i] = Float(sin(phase) * env + sin(phase * 2) * env * 0.15)
+        }
+        return buf
+    }
+
     /// Two sharp claps: the gym's "10 seconds" warning.
     func playClapper() {
         ensureEngineRunning()
@@ -482,6 +515,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         guard !Task.isCancelled, context.isWorkPhase() else { return }
         activeTokenIndex = combo.count
         strikesCuedCount += combo.count
+        onComboPlayed?(combo)
 
         // Throwing time, then the tempo's reset — adapted to the HR plan if enabled.
         let progress = context.roundProgress()

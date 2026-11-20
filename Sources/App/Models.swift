@@ -128,12 +128,16 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var campLengthWeeks: Int = 8
     var bagPreferences = BagPreferences()
     var useImperial = false
+    var campHistory: [CampRecord] = []
+    var trackHeadMovement = true
+    var guidedBreathing = false
 
     enum CodingKeys: String, CodingKey {
         case id, name, sex, age, weightKg, heightCm, targetFightWeightKg
         case restingHR, useAutoMaxHR, maxHR, lactateThresholdHR, zoneMethod
         case manualZones, campPhase, audioCoach
         case fightDate, campLengthWeeks, bagPreferences, useImperial
+        case campHistory, trackHeadMovement, guidedBreathing
     }
 
     init() {}
@@ -159,6 +163,9 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         campLengthWeeks = try c.decodeIfPresent(Int.self, forKey: .campLengthWeeks) ?? 8
         bagPreferences = (try? c.decodeIfPresent(BagPreferences.self, forKey: .bagPreferences)) ?? BagPreferences()
         useImperial = (try? c.decodeIfPresent(Bool.self, forKey: .useImperial)) ?? false
+        campHistory = (try? c.decodeIfPresent([CampRecord].self, forKey: .campHistory)) ?? []
+        trackHeadMovement = (try? c.decodeIfPresent(Bool.self, forKey: .trackHeadMovement)) ?? true
+        guidedBreathing = (try? c.decodeIfPresent(Bool.self, forKey: .guidedBreathing)) ?? false
     }
 
     mutating func sanitize() {
@@ -364,12 +371,14 @@ struct RoundStat: Codable, Identifiable, Equatable {
     let peakBPM: Int
     let stoolDropBPM: Int?
     let strikesCued: Int
+    /// Head movements detected by AirPods during the round (nil = not tracked).
+    var headMoves: Int?
 
     enum CodingKeys: String, CodingKey {
-        case id, roundNumber, startElapsed, endElapsed, avgBPM, peakBPM, stoolDropBPM, strikesCued
+        case id, roundNumber, startElapsed, endElapsed, avgBPM, peakBPM, stoolDropBPM, strikesCued, headMoves
     }
 
-    init(id: UUID = UUID(), roundNumber: Int, startElapsed: TimeInterval, endElapsed: TimeInterval, avgBPM: Int, peakBPM: Int, stoolDropBPM: Int?, strikesCued: Int = 0) {
+    init(id: UUID = UUID(), roundNumber: Int, startElapsed: TimeInterval, endElapsed: TimeInterval, avgBPM: Int, peakBPM: Int, stoolDropBPM: Int?, strikesCued: Int = 0, headMoves: Int? = nil) {
         self.id = id
         self.roundNumber = roundNumber
         self.startElapsed = startElapsed
@@ -378,6 +387,7 @@ struct RoundStat: Codable, Identifiable, Equatable {
         self.peakBPM = peakBPM
         self.stoolDropBPM = stoolDropBPM
         self.strikesCued = strikesCued
+        self.headMoves = headMoves
     }
 
     init(from decoder: Decoder) throws {
@@ -390,7 +400,41 @@ struct RoundStat: Codable, Identifiable, Equatable {
         peakBPM = try c.decode(Int.self, forKey: .peakBPM)
         stoolDropBPM = try c.decodeIfPresent(Int.self, forKey: .stoolDropBPM)
         strikesCued = try c.decodeIfPresent(Int.self, forKey: .strikesCued) ?? 0
+        headMoves = try? c.decodeIfPresent(Int.self, forKey: .headMoves)
     }
+}
+
+/// One combination the bag coach called, and when (seconds into the workout).
+struct ComboEvent: Codable, Equatable {
+    var t: TimeInterval
+    var strikes: [Strike]
+}
+
+/// A finished fight camp, kept so the next camp can be compared to it.
+struct CampRecord: Codable, Equatable, Hashable {
+    var fightDate: Date
+    var campLengthWeeks: Int
+}
+
+/// Body areas for the soreness log.
+enum BodyRegion: String, Codable, CaseIterable, Identifiable {
+    case neck = "Neck", shoulder = "Shoulder", elbow = "Elbow", wrist = "Wrist / hand"
+    case ribs = "Ribs", lowerBack = "Lower back", hip = "Hip / groin"
+    case knee = "Knee", shin = "Shin", ankle = "Ankle / foot"
+    var id: String { rawValue }
+
+    var isKickingArea: Bool { self == .shin || self == .ankle || self == .knee || self == .hip }
+    var isPunchingArea: Bool { self == .wrist || self == .elbow || self == .shoulder }
+}
+
+struct SorenessEntry: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var profileID: UUID
+    var date = Date()
+    var region: BodyRegion
+    /// 1 = niggle, 2 = sore, 3 = painful
+    var severity: Int
+    var note: String = ""
 }
 
 struct AutoHRREvent: Codable, Identifiable, Equatable {
@@ -525,6 +569,9 @@ struct SavedWorkout: Codable, Identifiable {
     var trainingPlanID: UUID?
     var trainingPlanTitle: String?
     var blockResults: [BlockResult] = []
+    var comboEvents: [ComboEvent] = []
+    var headMovesPerMinute: Double?
+    var breathingGuided = false
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -536,6 +583,7 @@ struct SavedWorkout: Codable, Identifiable {
         case isCompressedArchive, archiveFileName
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
         case trainingPlanID, trainingPlanTitle, blockResults
+        case comboEvents, headMovesPerMinute, breathingGuided
     }
 
     init(
@@ -577,7 +625,10 @@ struct SavedWorkout: Codable, Identifiable {
         planAdherence: Double? = nil,
         trainingPlanID: UUID? = nil,
         trainingPlanTitle: String? = nil,
-        blockResults: [BlockResult] = []
+        blockResults: [BlockResult] = [],
+        comboEvents: [ComboEvent] = [],
+        headMovesPerMinute: Double? = nil,
+        breathingGuided: Bool = false
     ) {
         self.id = id
         self.profileID = profileID
@@ -618,6 +669,9 @@ struct SavedWorkout: Codable, Identifiable {
         self.trainingPlanID = trainingPlanID
         self.trainingPlanTitle = trainingPlanTitle
         self.blockResults = blockResults
+        self.comboEvents = comboEvents
+        self.headMovesPerMinute = headMovesPerMinute
+        self.breathingGuided = breathingGuided
     }
 
     init(from decoder: Decoder) throws {
@@ -662,6 +716,9 @@ struct SavedWorkout: Codable, Identifiable {
         trainingPlanID = try? c.decodeIfPresent(UUID.self, forKey: .trainingPlanID)
         trainingPlanTitle = try? c.decodeIfPresent(String.self, forKey: .trainingPlanTitle)
         blockResults = (try? c.decodeIfPresent([BlockResult].self, forKey: .blockResults)) ?? []
+        comboEvents = (try? c.decodeIfPresent([ComboEvent].self, forKey: .comboEvents)) ?? []
+        headMovesPerMinute = try? c.decodeIfPresent(Double.self, forKey: .headMovesPerMinute)
+        breathingGuided = (try? c.decodeIfPresent(Bool.self, forKey: .breathingGuided)) ?? false
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

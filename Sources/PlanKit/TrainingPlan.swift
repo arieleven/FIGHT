@@ -279,11 +279,90 @@ enum PlanFormat {
 
 enum PlanTemplates {
     static var all: [TrainingPlan] {
-        [comboSharpening, fightPace, clinchDay, conditioning, technicalRoadwork]
+        [benchmark, comboSharpening, fightPace, clinchDay, conditioning, technicalRoadwork]
+    }
+
+    /// Templates keep fixed IDs so runs of the same template can be grouped and compared
+    /// (and so SwiftUI lists don't see a "new" template on every redraw).
+    static func stableID(_ n: Int) -> UUID {
+        UUID(uuidString: String(format: "F1617000-0000-4000-8000-%012d", n))!
+    }
+
+    private static func stable(_ plan: TrainingPlan, _ n: Int) -> TrainingPlan {
+        var p = plan
+        p.id = stableID(n * 100)
+        for i in p.blocks.indices { p.blocks[i].id = stableID(n * 100 + i + 1) }
+        p.createdAt = Date(timeIntervalSince1970: 1_767_225_600)
+        return p
+    }
+
+    static let benchmarkID = stableID(900)
+    static let fightNightID = stableID(1000)
+
+    /// Fight-night warm-up, timed to finish at the walkout: raise HR gradually,
+    /// touch fight pace briefly, then settle so you walk out warm but fresh.
+    static var fightNightWarmUp: TrainingPlan {
+        var move = PlanBlock(kind: .steady, title: "Easy movement")
+        move.durationSeconds = 300
+        move.target = ZoneTarget(lowZone: 1, highZone: 2)
+        move.cue = "Skip, jog on the spot, open the hips"
+
+        var shadow = PlanBlock(kind: .timedDrill, title: "Shadowboxing")
+        shadow.durationSeconds = 360
+        shadow.target = ZoneTarget(lowZone: 2, highZone: 2)
+        shadow.cue = "Rehearse your game plan. Relaxed, long breaths."
+
+        var tech = PlanBlock(kind: .bagRounds, title: "Pads / technical rounds")
+        tech.rounds = 2; tech.workSeconds = 120; tech.restSeconds = 60
+        tech.tempo = .technical
+        tech.target = ZoneTarget(lowZone: 2, highZone: 3)
+        tech.cue = "Crisp and accurate, not hard"
+
+        var sharp = PlanBlock(kind: .intervals, title: "Fight-pace bursts")
+        sharp.rounds = 3; sharp.workSeconds = 30; sharp.restSeconds = 60
+        sharp.target = ZoneTarget(lowZone: 3, highZone: 4)
+        sharp.cue = "Explode for 30 s, then breathe it back down"
+
+        var settle = PlanBlock(kind: .rest, title: "Settle & focus")
+        settle.durationSeconds = 240
+        settle.cue = "Slow nasal breathing. Gloves on, sweat on, mind on the plan."
+
+        let plan = TrainingPlan(title: "Fight-Night Warm-Up", author: "FIGHT", discipline: "Kickboxing",
+                                notes: "Finishes at your walkout time: warm, sweating, heart rate settled.",
+                                blocks: [move, shadow, tech, sharp, settle])
+        return stable(plan, 10)
+    }
+
+    /// A fixed test, identical every time, so your heart rate on the same work shows real progress.
+    static var benchmark: TrainingPlan {
+        var rope = PlanBlock(kind: .timedDrill, title: "Jump rope warm-up")
+        rope.durationSeconds = 300
+        rope.target = ZoneTarget(lowZone: 2, highZone: 2)
+        rope.cue = "Easy. Same warm-up every test."
+
+        var rounds = PlanBlock(kind: .bagRounds, title: "Benchmark rounds")
+        rounds.rounds = 5; rounds.workSeconds = 180; rounds.restSeconds = 60
+        rounds.combos = [[.jab, .cross], [.jab, .cross, .leadHook], [.jab, .cross, .rearLowKick],
+                         [.leadTeep], [.cross, .leadHook, .cross], [.jab, .rearMidKick]]
+        rounds.tempo = .fightPace
+        rounds.cue = "Same effort every test: fight pace, every strike on the callout. Sit down in the rest."
+
+        var cool = PlanBlock(kind: .steady, title: "Cool-down")
+        cool.durationSeconds = 180
+        cool.target = ZoneTarget(lowZone: 1, highZone: 1)
+
+        let plan = TrainingPlan(title: "FIGHT Benchmark", author: "FIGHT", discipline: "Kickboxing",
+                                notes: "Repeat every 4 weeks. Same work every time, so a lower heart rate and faster recovery mean you're fitter.",
+                                blocks: [rope, rounds, cool])
+        var p = stable(plan, 9)
+        p.id = benchmarkID
+        return p
     }
 
     /// The coach example: 1-2s and low kicks only for 3 rounds, then jump rope, then a burnout.
-    static var comboSharpening: TrainingPlan {
+    static var comboSharpening: TrainingPlan { stable(_comboSharpening, 1) }
+
+    private static var _comboSharpening: TrainingPlan {
         var warm = PlanBlock(kind: .timedDrill, title: "Shadowbox warm-up")
         warm.durationSeconds = 180
         warm.target = ZoneTarget(lowZone: 1, highZone: 2)
@@ -315,7 +394,9 @@ enum PlanTemplates {
                             blocks: [warm, bag, rope, burnout, cool])
     }
 
-    static var fightPace: TrainingPlan {
+    static var fightPace: TrainingPlan { stable(_fightPace, 2) }
+
+    private static var _fightPace: TrainingPlan {
         var rope = PlanBlock(kind: .timedDrill, title: "Jump rope")
         rope.durationSeconds = 300
         rope.target = ZoneTarget(lowZone: 2, highZone: 3)
@@ -331,7 +412,9 @@ enum PlanTemplates {
                             notes: "Championship-distance pacing.", blocks: [rope, rounds, cool])
     }
 
-    static var clinchDay: TrainingPlan {
+    static var clinchDay: TrainingPlan { stable(_clinchDay, 3) }
+
+    private static var _clinchDay: TrainingPlan {
         var shadow = PlanBlock(kind: .timedDrill, title: "Shadow with knees")
         shadow.durationSeconds = 240
         var knees = PlanBlock(kind: .bagRounds, title: "Knees & elbows")
@@ -346,7 +429,9 @@ enum PlanTemplates {
                             notes: "Close-range weapons and clinch strength.", blocks: [shadow, knees, core])
     }
 
-    static var conditioning: TrainingPlan {
+    static var conditioning: TrainingPlan { stable(_conditioning, 4) }
+
+    private static var _conditioning: TrainingPlan {
         var rope = PlanBlock(kind: .timedDrill, title: "Jump rope")
         rope.durationSeconds = 180
         var sprints = PlanBlock(kind: .intervals, title: "Burpee / sprawl intervals")
@@ -360,7 +445,9 @@ enum PlanTemplates {
                             notes: "Short, hard, repeatable efforts.", blocks: [rope, sprints, finisher])
     }
 
-    static var technicalRoadwork: TrainingPlan {
+    static var technicalRoadwork: TrainingPlan { stable(_technicalRoadwork, 5) }
+
+    private static var _technicalRoadwork: TrainingPlan {
         var tech = PlanBlock(kind: .bagRounds, title: "Technical flow")
         tech.rounds = 4; tech.workSeconds = 180; tech.restSeconds = 60
         tech.tempo = .technical

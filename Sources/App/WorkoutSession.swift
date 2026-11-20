@@ -29,6 +29,9 @@ struct WorkoutDraft: Codable {
     var trainingPlanID: UUID?
     var trainingPlanTitle: String?
     var blockResults: [BlockResult]?
+    var comboEvents: [ComboEvent]?
+    var headMovesPerMinute: Double?
+    var breathingGuided: Bool?
 }
 
 enum WorkoutFinalizer {
@@ -94,7 +97,10 @@ enum WorkoutFinalizer {
             planAdherence: adherence,
             trainingPlanID: d.trainingPlanID,
             trainingPlanTitle: d.trainingPlanTitle,
-            blockResults: d.blockResults ?? []
+            blockResults: d.blockResults ?? [],
+            comboEvents: d.comboEvents ?? [],
+            headMovesPerMinute: d.headMovesPerMinute,
+            breathingGuided: d.breathingGuided ?? false
         )
     }
 }
@@ -106,6 +112,10 @@ enum WorkoutFinalizer {
 @MainActor
 final class WorkoutSession: ObservableObject {
     let audio = AudioCoachEngine()
+    let headMotion = HeadMotionTracker()
+
+    /// The app's live session, for Siri and Shortcuts.
+    static weak var shared: WorkoutSession?
 
     private var ble: BLEHeartRateManager?
     private var store: WorkoutStore?
@@ -217,10 +227,23 @@ final class WorkoutSession: ObservableObject {
     private var lastActivityPush = Date.distantPast
     private var lastActivityState: (bpm: Int, zone: Int, round: Int, rest: Bool)?
 
+    // Signature-feature capture
+    private var comboEvents: [ComboEvent] = []
+    private var bestRecoveryRecord = 0
+    private var recoveryRecordAnnounced = false
+    private var nextBreathCue: TimeInterval?
+    private var breathInhaleNext = true
+    private var breathingUsed = false
+    private var currentRoundStartHeadMoves = 0
+    /// Short-lived banner, e.g. "New record: recovery −38 BPM".
+    @Published private(set) var liveRecordBanner: String?
+
     // MARK: Wiring
 
     func bind(ble: BLEHeartRateManager, store: WorkoutStore, health: HealthKitManager) {
         let firstBind = self.store == nil
+        Self.shared = self
+        audio.onComboPlayed = { [weak self] combo in self?.logCombo(combo) }
         self.ble = ble
         self.store = store
         self.health = health
@@ -578,6 +601,15 @@ final class WorkoutSession: ObservableObject {
         requestFinishPrompt = false
         liveAlpha1 = nil
         audio.strikesCuedCount = 0
+        comboEvents = []
+        bestRecoveryRecord = store.map { Records.bestRecovery(workouts: $0.workouts, profileID: $0.activeProfileID) } ?? 0
+        recoveryRecordAnnounced = false
+        liveRecordBanner = nil
+        nextBreathCue = nil
+        breathInhaleNext = true
+        breathingUsed = false
+        currentRoundStartHeadMoves = 0
+        if profile.trackHeadMovement { headMotion.start() }
         runningPlan = queuedPlan
         queuedPlan = nil
         planBlockIndex = 0
@@ -658,6 +690,7 @@ final class WorkoutSession: ObservableObject {
         lastTick = nil
         isRecording = false
         UIApplication.shared.isIdleTimerDisabled = false
+        headMotion.stop()
         audio.shutdownAudio()
         endLiveActivity()
     }
@@ -772,6 +805,7 @@ final class WorkoutSession: ObservableObject {
         if isRunningPlan && !planComplete {
             advancePlan(by: dt)
         }
+        guideBreathingIfNeeded()
 
         if selectedCategory == .lthrTest {
             if !lthrWarmupAnnounced && elapsedSeconds >= 600 {
@@ -845,6 +879,8 @@ final class WorkoutSession: ObservableObject {
         }
 
         isRestPeriod = true
+        nextBreathCue = elapsedSeconds + 2.5
+        breathInhaleNext = true
         let peak = max(roundEndPeakBPM, hr)
         if peak > 90 {
             pendingRecovery = PendingRecovery(startElapsed: elapsedSeconds, peakBPM: peak,
@@ -856,13 +892,17 @@ final class WorkoutSession: ObservableObject {
     private func beginNextRound(bpm: Int, coachCfg: AudioCoachSettings) {
         let drop: Int? = (roundEndPeakBPM > 0 && bpm > 0) ? max(0, roundEndPeakBPM - bpm) : nil
         recordRound(stoolDrop: drop)
-        if let drop, coachCfg.masterEnabled && coachCfg.announceStoolRecovery {
+        if let drop, checkRecoveryRecord(drop) {
+            // Record announcement replaces the normal recovery cue.
+        } else if let drop, coachCfg.masterEnabled && coachCfg.announceStoolRecovery {
             audio.announceCoachingCue("Recovered \(drop) beats.", enabled: true)
         }
         currentRound += 1
         isRestPeriod = false
+        nextBreathCue = nil
         currentRoundStartElapsed = elapsedSeconds
         currentRoundStartStrikes = audio.strikesCuedCount
+        currentRoundStartHeadMoves = headMotion.totalMoves
         roundEndPeakBPM = 0
         audio.playRoundStartBell()
         if let limit = roundsLimit, currentRound == limit, limit > 1 {
@@ -892,8 +932,52 @@ final class WorkoutSession: ObservableObject {
             avgBPM: avg,
             peakBPM: peak,
             stoolDropBPM: stoolDrop,
-            strikesCued: max(0, audio.strikesCuedCount - currentRoundStartStrikes)
+            strikesCued: max(0, audio.strikesCuedCount - currentRoundStartStrikes),
+            headMoves: headMotion.isReceiving ? max(0, headMotion.totalMoves - currentRoundStartHeadMoves) : nil
         ))
+    }
+
+    // MARK: Signature features
+
+    private func logCombo(_ combo: [Strike]) {
+        guard isRecording else { return }
+        let t = elapsedSeconds + (lastTick.map { Date().timeIntervalSince($0) } ?? 0)
+        comboEvents.append(ComboEvent(t: t, strikes: combo))
+    }
+
+    /// Speaks a new personal record the moment it happens. Returns true if it did.
+    private func checkRecoveryRecord(_ drop: Int) -> Bool {
+        guard bestRecoveryRecord >= 15, drop > bestRecoveryRecord else { return false }
+        bestRecoveryRecord = drop
+        liveRecordBanner = "New record: recovered \(drop) BPM in 60 s"
+        guard !recoveryRecordAnnounced else { return false }
+        recoveryRecordAnnounced = true
+        audio.announceCoachingCue("New recovery record! \(drop) beats.", enabled: profile.audioCoach.masterEnabled)
+        return profile.audioCoach.masterEnabled
+    }
+
+    /// Paced breathing tones on the stool: in for 4, out for 6 (6 breaths a minute).
+    private func guideBreathingIfNeeded() {
+        guard profile.guidedBreathing, roundTimerEnabled, isRestPeriod, let next = nextBreathCue,
+              elapsedSeconds >= next else { return }
+        let remaining = currentPhaseTarget - phaseElapsed
+        guard remaining > 7 else { nextBreathCue = nil; return }
+        let seconds: Double = breathInhaleNext ? 4 : 6
+        audio.playBreathCue(inhale: breathInhaleNext, seconds: seconds)
+        breathingUsed = true
+        breathInhaleNext.toggle()
+        nextBreathCue = next + seconds
+    }
+
+    private var headMovesPerMinute: Double? {
+        guard headMotion.isReceiving else { return nil }
+        let rounds = completedRounds.filter { $0.headMoves != nil }
+        let workSeconds = rounds.reduce(0.0) { $0 + ($1.endElapsed - $1.startElapsed) }
+        if workSeconds >= 60 {
+            return Double(rounds.compactMap(\.headMoves).reduce(0, +)) / workSeconds * 60
+        }
+        guard elapsedSeconds >= 60 else { return nil }
+        return Double(headMotion.totalMoves) / elapsedSeconds * 60
     }
 
     // MARK: Live analysis
@@ -916,6 +1000,7 @@ final class WorkoutSession: ObservableObject {
                     autoHRREvents.append(AutoHRREvent(elapsedSeconds: elapsedSeconds, peakBPM: tracker.peakBPM,
                                                       recovery60BPM: bpm, dropBPM: drop, contextLabel: tracker.contextLabel))
                     latestAutoHRRBanner = "Auto HRR-60: −\(drop) BPM (\(tracker.peakBPM) → \(bpm))"
+                    _ = checkRecoveryRecord(drop)
                 }
                 pendingRecovery = nil
                 pendingRecoveryRemaining = nil
@@ -1060,7 +1145,10 @@ final class WorkoutSession: ObservableObject {
             ghostTitle: selectedGhost?.title, planTitle: activePlan?.title,
             planTargetLow: activePlan?.targetLowBPM, planTargetHigh: activePlan?.targetHighBPM,
             trainingPlanID: runningPlan?.id, trainingPlanTitle: runningPlan?.title,
-            blockResults: blockResults
+            blockResults: blockResults,
+            comboEvents: comboEvents,
+            headMovesPerMinute: headMovesPerMinute,
+            breathingGuided: breathingUsed
         )
     }
 

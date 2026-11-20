@@ -61,6 +61,7 @@ jobs:
           plutil -extract NSSupportsLiveActivities raw "$APP/Info.plist"
           plutil -extract NSHealthUpdateUsageDescription raw "$APP/Info.plist"
           plutil -extract NSHealthShareUsageDescription raw "$APP/Info.plist"
+          plutil -extract NSMotionUsageDescription raw "$APP/Info.plist"
           plutil -extract NSExtension.NSExtensionPointIdentifier raw "$WIDGET/Info.plist" | grep -q com.apple.widgetkit-extension
           echo "All required Info.plist keys present."
 

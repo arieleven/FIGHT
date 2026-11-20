@@ -97,6 +97,8 @@
 			</dict>
 		</dict>
 	</array>
+	<key>NSMotionUsageDescription</key>
+	<string>FIGHT uses your AirPods' motion sensors to count head movement (slips and rolls) during rounds.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>FIGHT uses the camera to scan training-plan QR codes from your coach.</string>
 	<key>LSRequiresIPhoneOS</key>

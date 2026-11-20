@@ -14,6 +14,7 @@ final class WorkoutStore: ObservableObject {
     @Published var readinessReadings: [ReadinessReading] = []
     @Published var weighIns: [WeighIn] = []
     @Published var plans: [TrainingPlan] = []
+    @Published var soreness: [SorenessEntry] = []
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
     private var cachedGhosts: [GhostSession] = []
 
@@ -29,6 +30,9 @@ final class WorkoutStore: ObservableObject {
         set {
             var clean = newValue
             clean.sanitize()
+            if let old = profiles.first(where: { $0.id == clean.id }) {
+                Self.archiveFinishedCamp(old: old, new: &clean)
+            }
             if let idx = profiles.firstIndex(where: { $0.id == clean.id }) {
                 profiles[idx] = clean
             } else {
@@ -86,6 +90,19 @@ final class WorkoutStore: ObservableObject {
         loadReadiness()
         loadWeighIns()
         loadPlans()
+        loadSoreness()
+    }
+
+    /// When a fighter sets a new fight date after a fight has passed, keep the
+    /// finished camp so the next one can be compared against it.
+    static func archiveFinishedCamp(old: AthleteProfile, new: inout AthleteProfile, now: Date = Date()) {
+        guard let oldFight = old.fightDate, oldFight < now, new.fightDate != oldFight else { return }
+        let record = CampRecord(fightDate: oldFight, campLengthWeeks: old.campLengthWeeks)
+        if !new.campHistory.contains(record) {
+            new.campHistory.append(record)
+            new.campHistory.sort { $0.fightDate < $1.fightDate }
+            if new.campHistory.count > 10 { new.campHistory.removeFirst(new.campHistory.count - 10) }
+        }
     }
 
     private struct ProfileContainer: Codable {
@@ -558,6 +575,46 @@ final class WorkoutStore: ObservableObject {
         p.sanitize()
         profiles[idx] = p
         saveProfilesToDisk()
+    }
+
+    // MARK: - Soreness log
+
+    private var sorenessFileURL: URL {
+        let dir = documentsDirectory.appendingPathComponent("Body", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("soreness.json")
+    }
+
+    private func loadSoreness() {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        guard let data = try? Data(contentsOf: sorenessFileURL),
+              let list = try? decoder.decode([SorenessEntry].self, from: data) else { return }
+        soreness = list.sorted { $0.date > $1.date }
+    }
+
+    private func saveSoreness() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(soreness) {
+            try? data.write(to: sorenessFileURL, options: .atomic)
+        }
+    }
+
+    func addSoreness(_ entries: [SorenessEntry]) {
+        guard !entries.isEmpty else { return }
+        soreness.append(contentsOf: entries)
+        soreness.sort { $0.date > $1.date }
+        saveSoreness()
+    }
+
+    func deleteSoreness(_ entry: SorenessEntry) {
+        soreness.removeAll { $0.id == entry.id }
+        saveSoreness()
+    }
+
+    var activeSoreness: [SorenessEntry] {
+        SorenessInsights.active(soreness, profileID: activeProfileID)
     }
 
     func profile(for workout: SavedWorkout) -> AthleteProfile {
