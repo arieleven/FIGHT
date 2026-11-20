@@ -234,6 +234,9 @@ struct BagPreferences: Codable, Equatable {
 struct ComboGenerator {
     var prefs: BagPreferences
     private(set) var recent: [[Strike]] = []
+    /// Library picks before any Dutch-finish kick was added, so a base combo
+    /// can't be re-picked and turned into an identical repeat.
+    private var recentBases: [[Strike]] = []
 
     init(prefs: BagPreferences) {
         self.prefs = prefs
@@ -290,8 +293,9 @@ struct ComboGenerator {
         }
         if pool.isEmpty { pool = [[.jab, .cross]] }
 
-        let fresh = pool.filter { candidate in !recent.contains(candidate) }
-        var combo = (fresh.isEmpty ? pool : fresh).randomElement() ?? [.jab, .cross]
+        let fresh = pool.filter { candidate in !recent.contains(candidate) && !recentBases.contains(candidate) }
+        let base = (fresh.isEmpty ? pool : fresh).randomElement() ?? [.jab, .cross]
+        var combo = base
 
         // Dutch-style finish: close punch combos with a kick.
         if !prefs.customOnly, prefs.dutchFinish, prefs.includeKicks,
@@ -302,8 +306,13 @@ struct ComboGenerator {
             combo.append(lastIsLeadSide ? .rearLowKick : .leadLowKick)
         }
 
+        if combo == recent.last, combo.count > base.count {
+            combo = base // never repeat the previous combo exactly
+        }
         recent.append(combo)
+        recentBases.append(base)
         if recent.count > 4 { recent.removeFirst() }
+        if recentBases.count > 4 { recentBases.removeFirst() }
         return combo
     }
 

@@ -198,7 +198,7 @@ final class ComboGeneratorTests: XCTestCase {
     func testNoImmediateRepeats() {
         var gen = ComboGenerator(prefs: BagPreferences())
         var previous: [Strike] = []
-        for _ in 0..<200 {
+        for _ in 0..<5000 {
             let combo = gen.next()
             XCTAssertNotEqual(combo, previous)
             previous = combo
