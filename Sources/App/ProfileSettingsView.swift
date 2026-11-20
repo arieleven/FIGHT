@@ -64,7 +64,6 @@ struct ProfileSettingsView: View {
                         }
                     }
 
-                    // Age Wheel Row
                     wheelValueRow(title: "Age", valueText: "\(profile.age) yrs", wheel: .age)
                     if expandedWheel == .age {
                         Picker("Age", selection: binding(for: \.age)) {
@@ -76,7 +75,6 @@ struct ProfileSettingsView: View {
                         .frame(height: 130)
                     }
 
-                    // Height Wheel Row
                     wheelValueRow(title: "Height", valueText: "\(Int(round(profile.heightCm))) cm", wheel: .height)
                     if expandedWheel == .height {
                         Picker("Height", selection: Binding(
@@ -96,7 +94,6 @@ struct ProfileSettingsView: View {
                         .frame(height: 130)
                     }
 
-                    // Current Weight Wheel Row
                     wheelValueRow(title: "Current Weight", valueText: String(format: "%.1f kg", profile.weightKg), wheel: .weight)
                     if expandedWheel == .weight {
                         Picker("Current Weight", selection: binding(for: \.weightKg)) {
@@ -108,7 +105,6 @@ struct ProfileSettingsView: View {
                         .frame(height: 130)
                     }
 
-                    // Resting HR Wheel Row
                     wheelValueRow(title: "Resting HR", valueText: "\(profile.restingHR) BPM", wheel: .restingHR)
                     if expandedWheel == .restingHR {
                         Picker("Resting HR", selection: binding(for: \.restingHR)) {

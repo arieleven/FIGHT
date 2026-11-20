@@ -7,12 +7,25 @@ struct WorkoutDetailView: View {
 
     @State private var selectedElapsed: Double?
     @State private var loadedSamples: [HeartRatePoint] = []
+    @State private var showRollingTrend = true
     @State private var showingComparison = false
 
     private var chartSamples: [HeartRatePoint] {
         guard loadedSamples.count > 360 else { return loadedSamples }
         let strideStep = max(1, loadedSamples.count / 360)
         return stride(from: 0, to: loadedSamples.count, by: strideStep).map { loadedSamples[$0] }
+    }
+
+    private var rollingTrendSamples: [HeartRatePoint] {
+        guard chartSamples.count >= 8 else { return [] }
+        let window = 6
+        return chartSamples.indices.map { i in
+            let lo = max(0, i - window)
+            let hi = min(chartSamples.count - 1, i + window)
+            let slice = chartSamples[lo...hi].map(\.bpm)
+            let avg = slice.reduce(0, +) / slice.count
+            return HeartRatePoint(timestamp: chartSamples[i].timestamp, elapsedSeconds: chartSamples[i].elapsedSeconds, bpm: avg)
+        }
     }
 
     private var selectedSample: HeartRatePoint? {
@@ -24,12 +37,16 @@ struct WorkoutDetailView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSummaryCard
+                calorieBreakdownCard
                 interactiveChartCard
-                if workout.roundStats.count >= 2 {
-                    roundDecayChartCard
-                }
                 if !workout.pointsOfInterest.isEmpty {
                     poiSection
+                }
+                if !workout.autoHRREvents.isEmpty {
+                    autoHRRSection
+                }
+                if workout.roundStats.count >= 2 {
+                    roundDecayChartCard
                 }
                 zoneBreakdownCard
                 advancedMetricsGrid
@@ -102,7 +119,53 @@ struct WorkoutDetailView: View {
                 Spacer()
                 statBox(title: "MAX HR", value: "\(workout.maxBPM)")
                 Spacer()
-                statBox(title: "TOTAL KCAL", value: "\(Int(workout.calories))")
+                statBox(title: "MIN HR", value: "\(workout.minBPM)")
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var calorieBreakdownCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("ENERGY EXPENDITURE BREAKDOWN")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("ACTIVE BURN")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.orange)
+                    Text("\(Int(workout.activeCalories)) kcal")
+                        .font(.title3.weight(.heavy).monospacedDigit())
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+                Text("+")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("RESTING BMR")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    Text("\(Int(workout.bmrCalories)) kcal")
+                        .font(.title3.weight(.bold).monospacedDigit())
+                }
+                Spacer()
+                Text("=")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("TOTAL KCAL")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.cyan)
+                    Text("\(Int(workout.calories)) kcal")
+                        .font(.title3.weight(.heavy).monospacedDigit())
+                        .foregroundStyle(.cyan)
+                }
             }
         }
         .padding()
@@ -119,26 +182,29 @@ struct WorkoutDetailView: View {
         }
     }
 
-    // MARK: - Interactive HR Curve + Points of Interest
     private var interactiveChartCard: some View {
         let zones = workoutStore.activeProfile.activeZones
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("HEART RATE CURVE & HIGHLIGHTS")
+                Text("HEART RATE CURVE & POI MARKERS")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                if let sample = selectedSample {
-                    let z = workoutStore.activeProfile.zone(for: sample.bpm)
-                    Text("\(formatDuration(sample.elapsedSeconds)) • \(sample.bpm) BPM (\(z.shortName))")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(z.color)
-                } else {
-                    Text("Drag finger on graph")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
+                Toggle("Trend", isOn: $showRollingTrend)
+                    .toggleStyle(.button)
+                    .controlSize(.mini)
+            }
+
+            if let sample = selectedSample {
+                let z = workoutStore.activeProfile.zone(for: sample.bpm)
+                Text("Selected: \(formatDuration(sample.elapsedSeconds)) • \(sample.bpm) BPM (\(z.name))")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(z.color)
+            } else {
+                Text("Drag on chart or tap a POI chip below to inspect")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
 
             if chartSamples.count >= 2 {
@@ -158,7 +224,7 @@ struct WorkoutDetailView: View {
                         )
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [.red.opacity(0.35), .orange.opacity(0.15), .clear],
+                                colors: [.red.opacity(0.32), .orange.opacity(0.12), .clear],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -168,38 +234,57 @@ struct WorkoutDetailView: View {
                             x: .value("Time (s)", pt.elapsedSeconds),
                             y: .value("BPM", pt.bpm)
                         )
-                        .lineStyle(StrokeStyle(lineWidth: 2.5))
+                        .lineStyle(StrokeStyle(lineWidth: 2.0))
                         .foregroundStyle(.red)
                     }
 
+                    if showRollingTrend {
+                        ForEach(rollingTrendSamples) { pt in
+                            LineMark(
+                                x: .value("Trend Time", pt.elapsedSeconds),
+                                y: .value("Trend BPM", pt.bpm)
+                            )
+                            .lineStyle(StrokeStyle(lineWidth: 1.8, dash: [5, 3]))
+                            .foregroundStyle(.cyan.opacity(0.85))
+                        }
+                    }
+
                     ForEach(workout.pointsOfInterest) { poi in
+                        RuleMark(x: .value("POI Line", poi.elapsedSeconds))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                            .foregroundStyle((poi.isPositive ? Color.cyan : Color.yellow).opacity(0.55))
+
                         PointMark(
                             x: .value("Time (s)", poi.elapsedSeconds),
                             y: .value("BPM", poi.bpm)
                         )
-                        .symbolSize(90)
+                        .symbolSize(110)
                         .foregroundStyle(poi.isPositive ? .cyan : .yellow)
                         .annotation(position: .top, spacing: 4) {
-                            Image(systemName: poi.symbol)
-                                .font(.caption2.bold())
-                                .padding(4)
-                                .background(Color.black.opacity(0.75), in: Circle())
-                                .foregroundStyle(poi.isPositive ? .cyan : .yellow)
+                            HStack(spacing: 3) {
+                                Image(systemName: poi.symbol)
+                                Text(poi.shortTag)
+                            }
+                            .font(.system(size: 9, weight: .heavy))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.82), in: Capsule())
+                            .foregroundStyle(poi.isPositive ? .cyan : .yellow)
                         }
                     }
 
                     if let sample = selectedSample {
                         RuleMark(x: .value("Selected", sample.elapsedSeconds))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(.white.opacity(0.75))
                         PointMark(
                             x: .value("Selected", sample.elapsedSeconds),
                             y: .value("BPM", sample.bpm)
                         )
-                        .symbolSize(110)
+                        .symbolSize(120)
                         .foregroundStyle(.white)
                     }
                 }
-                .chartYScale(domain: max(45, workout.minBPM - 10)...min(230, workout.maxBPM + 12))
+                .chartYScale(domain: max(45, workout.minBPM - 10)...min(235, workout.maxBPM + 18))
                 .chartXAxis {
                     AxisMarks(values: .automatic(desiredCount: 5)) { value in
                         AxisGridLine()
@@ -212,7 +297,29 @@ struct WorkoutDetailView: View {
                     }
                 }
                 .chartXSelection(value: $selectedElapsed)
-                .frame(height: 230)
+                .frame(height: 250)
+
+                if !workout.pointsOfInterest.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(workout.pointsOfInterest) { poi in
+                                Button {
+                                    selectedElapsed = poi.elapsedSeconds
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: poi.symbol)
+                                        Text("\(poi.shortTag) @ \(formatDuration(poi.elapsedSeconds))")
+                                    }
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background((poi.isPositive ? Color.cyan : Color.yellow).opacity(0.18), in: Capsule())
+                                    .foregroundStyle(poi.isPositive ? .cyan : .yellow)
+                                }
+                            }
+                        }
+                    }
+                }
             } else {
                 Text("Not enough heart rate points recorded to plot graph.")
                     .font(.caption)
@@ -223,7 +330,69 @@ struct WorkoutDetailView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Round-by-Round Fatigue Decay Chart
+    private var poiSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("POINTS OF INTEREST")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+
+            ForEach(workout.pointsOfInterest) { poi in
+                Button {
+                    selectedElapsed = poi.elapsedSeconds
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: poi.symbol)
+                            .font(.headline)
+                            .foregroundStyle(poi.isPositive ? .cyan : .yellow)
+                            .frame(width: 28)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(poi.title)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                            Text(poi.detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(formatDuration(poi.elapsedSeconds))
+                            .font(.caption.monospacedDigit().weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(12)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+                }
+            }
+        }
+    }
+
+    private var autoHRRSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("AUTOMATIC IN-WORKOUT HRR-60 RECOVERIES")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.secondary)
+
+            ForEach(workout.autoHRREvents) { ev in
+                HStack {
+                    Image(systemName: "arrow.down.heart.fill")
+                        .foregroundStyle(.cyan)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(ev.contextLabel)
+                            .font(.subheadline.weight(.semibold))
+                        Text("\(ev.peakBPM) → \(ev.recovery60BPM) BPM @ \(formatDuration(ev.elapsedSeconds))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text("-\(ev.dropBPM) BPM")
+                        .font(.headline.monospacedDigit().weight(.bold))
+                        .foregroundStyle(.cyan)
+                }
+                .padding(12)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+            }
+        }
+    }
+
     private var roundDecayChartCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("ROUND-BY-ROUND FATIGUE DECAY")
@@ -261,41 +430,12 @@ struct WorkoutDetailView: View {
             ])
             .frame(height: 190)
 
-            HStack(spacing: 12) {
-                Label("Cyan bars = 60s Stool HR Drop per round", systemImage: "arrow.down.heart.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.cyan)
-            }
+            Label("Cyan bars = 60s Stool HR Drop per round", systemImage: "arrow.down.heart.fill")
+                .font(.caption2)
+                .foregroundStyle(.cyan)
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var poiSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("POINTS OF INTEREST")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(.secondary)
-
-            ForEach(workout.pointsOfInterest) { poi in
-                HStack(spacing: 12) {
-                    Image(systemName: poi.symbol)
-                        .font(.headline)
-                        .foregroundStyle(poi.isPositive ? .cyan : .yellow)
-                        .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(poi.title)
-                            .font(.subheadline.weight(.semibold))
-                        Text(poi.detail)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding(12)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
-            }
-        }
     }
 
     private var zoneBreakdownCard: some View {
@@ -343,28 +483,28 @@ struct WorkoutDetailView: View {
 
     private var advancedMetricsGrid: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("CONDITIONING & RECOVERY METRICS")
+            Text("CONDITIONING & FIGHTER ANALYTICS")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 metricTile(
-                    title: "HRR-60 RECOVERY",
-                    value: workout.hrr60Drop != nil ? "-\(workout.hrr60Drop!) BPM" : "Not Measured",
+                    title: "PEAK AUTO HRR-60",
+                    value: workout.hrr60Drop != nil ? "-\(workout.hrr60Drop!) BPM" : "No 60s Drop",
                     subtitle: hrrGrade(workout.hrr60Drop),
                     color: .cyan
                 )
                 metricTile(
-                    title: "EPOC AFTERBURN",
-                    value: "+\(Int(workout.epocBonusCalories)) kcal",
-                    subtitle: "Anaerobic excess burn",
-                    color: .orange
+                    title: "REDLINE EXPOSURE (Z5)",
+                    value: formatDuration(workout.redlineSeconds),
+                    subtitle: "Time above Z4 threshold",
+                    color: .red
                 )
                 metricTile(
                     title: "TRAINING LOAD (TRIMP)",
                     value: "\(Int(workout.trimpScore))",
                     subtitle: workout.trimpScore > 120 ? "High fight load" : "Moderate load",
-                    color: .red
+                    color: .orange
                 )
                 metricTile(
                     title: "CARDIAC DRIFT",
@@ -372,12 +512,33 @@ struct WorkoutDetailView: View {
                     subtitle: abs(workout.cardiacDriftPercent) <= 5.0 ? "Strong aerobic base" : "Aerobic decoupling",
                     color: .green
                 )
-                if let roundDrop = workout.avgInterRoundDrop {
+                metricTile(
+                    title: "AEROBIC EFFICIENCY",
+                    value: String(format: "%.2f", workout.aerobicEfficiencyIndex),
+                    subtitle: "Active kcal/min per 100 BPM",
+                    color: .mint
+                )
+                metricTile(
+                    title: "EPOC AFTERBURN",
+                    value: "+\(Int(workout.epocBonusCalories)) kcal",
+                    subtitle: "Post-session oxygen debt",
+                    color: .yellow
+                )
+                if workout.strikesCuedCount > 0 {
+                    let perMin = Double(workout.strikesCuedCount) / max(1.0, workout.duration / 60.0)
                     metricTile(
-                        title: "AVG STOOL DROP",
-                        value: "-\(roundDrop) BPM",
-                        subtitle: "Between-round recovery",
-                        color: .mint
+                        title: "BAG STRIKES CUED",
+                        value: "\(workout.strikesCuedCount)",
+                        subtitle: String(format: "%.1f strikes/min cadence", perMin),
+                        color: .orange
+                    )
+                }
+                if let ghostDelta = workout.ghostAvgDeltaBPM {
+                    metricTile(
+                        title: "VS GHOST PACE",
+                        value: String(format: "%+.1f BPM", ghostDelta),
+                        subtitle: ghostDelta <= 0 ? "More efficient than Ghost" : "Higher output than Ghost",
+                        color: .purple
                     )
                 }
                 if let rmssd = workout.rmssdMs {
@@ -410,7 +571,7 @@ struct WorkoutDetailView: View {
     }
 
     private func hrrGrade(_ drop: Int?) -> String {
-        guard let d = drop else { return "Complete 60s cooldown" }
+        guard let d = drop else { return "Trigger >80% MaxHR + 60s rest" }
         if d >= 30 { return "Elite Fighter (<30s reset)" }
         if d >= 20 { return "Fight Ready" }
         if d >= 12 { return "Average Recovery" }

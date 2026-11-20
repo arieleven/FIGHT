@@ -46,7 +46,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     private func setupAudioSessionAndEngine() {
         do {
             let session = AVAudioSession.sharedInstance()
-            // .mixWithOthers ensures Spotify / Apple Music NEVER pause or duck
             try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
         } catch {
@@ -75,8 +74,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
             playerNode.play()
         }
     }
-
-    // MARK: - Zero-Latency Pre-Rendered Speech Buffers
 
     func prepareStrikeVocabulary() async {
         let allTokens = punchTokens + kickTokens + closeRangeTokens + defenseTokens
@@ -170,8 +167,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         return outBuffer.frameLength > 0 ? outBuffer : combined
     }
 
-    // MARK: - Synthesized Percussion Cues (Metronome & Round Bell)
-
     private func buildSynthesizedCues() {
         beepHighBuffer = makeToneBuffer(freq: 1046.5, duration: 0.085, amplitude: 0.55)
         beepLowBuffer = makeToneBuffer(freq: 784.0, duration: 0.095, amplitude: 0.55)
@@ -203,8 +198,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
             playerNode.scheduleBuffer(bell, at: nil, options: [], completionHandler: nil)
         }
     }
-
-    // MARK: - Guided Heavy Bag & Tempo Metronome Loop
 
     func startBagCoachLoop(
         config: BagCoachConfig,
@@ -252,7 +245,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
                     executionDuration = scheduleVoiceCombo(tokens: combo)
                 }
 
-                // Subtract exact audio execution duration so total fight cadence stays dead-on tempo
                 let remainingPause = max(1.1, targetCycleSeconds - executionDuration)
                 try? await Task.sleep(nanoseconds: UInt64(remainingPause * 1_000_000_000))
             }
@@ -269,7 +261,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         var combo: [String] = []
         let length = Int.random(in: 2...4)
 
-        // Start 75% of combos with a jab or lead setup
         if Double.random(in: 0...1) < 0.75 {
             combo.append("Jab!")
         } else {
@@ -285,7 +276,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
             } else if config.includeKicks && roll < 0.56 {
                 combo.append(kickTokens.randomElement() ?? "Right middle kick!")
             } else {
-                // Alternate lead/rear hand naturally
                 let last = combo.last ?? ""
                 if last.contains("Jab") {
                     combo.append(["Cross!", "Right hook!", "Right uppercut!"].randomElement()!)
@@ -305,7 +295,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         for (idx, token) in tokens.enumerated() {
             guard let buf = tokenBuffers[token] else { continue }
             let bufSec = Double(buf.frameLength) / buf.format.sampleRate
-            // Trim trailing silence slightly for rapid-fire fight cadence
             let effectiveSec = max(0.24, bufSec * 0.78)
             playerNode.scheduleBuffer(buf, at: nil, options: [], completionHandler: nil)
             totalDuration += effectiveSec
@@ -335,8 +324,6 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         }
         return elapsed
     }
-
-    // MARK: - Live AirPods HR Coaching Announcements (Non-Ducking)
 
     func announceCoachingCue(_ message: String, enabled: Bool) {
         guard enabled else { return }

@@ -7,10 +7,25 @@ struct CoospoTrackerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(bleManager)
-                .environmentObject(workoutStore)
-                .preferredColorScheme(.dark)
+            TabView {
+                LiveWorkoutView()
+                    .tabItem {
+                        Label("Live", systemImage: "heart.fill")
+                    }
+
+                HistoryListView()
+                    .tabItem {
+                        Label("History", systemImage: "list.bullet.clipboard")
+                    }
+
+                ProfileSettingsView()
+                    .tabItem {
+                        Label("Fighter", systemImage: "person.crop.circle")
+                    }
+            }
+            .environmentObject(bleManager)
+            .environmentObject(workoutStore)
+            .preferredColorScheme(.dark)
         }
     }
 }

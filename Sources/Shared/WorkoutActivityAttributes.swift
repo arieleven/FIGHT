@@ -6,12 +6,12 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         var currentBPM: Int
         var zoneNumber: Int
         var zoneShortName: String
+        var calories: Int
+        var workoutStartDate: Date
+        var isTimedRound: Bool
         var roundNumber: Int
         var isRest: Bool
-        var isTimedRound: Bool
         var phaseEndDate: Date
-        var workoutStartDate: Date
-        var calories: Int
     }
 
     var athleteName: String

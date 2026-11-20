@@ -19,7 +19,6 @@ struct HistoryListView: View {
 
         NavigationStack {
             List {
-                // Fight Camp Readiness & ACWR Banner
                 Section {
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
@@ -46,7 +45,6 @@ struct HistoryListView: View {
                     .padding(.vertical, 4)
                 }
 
-                // Filter Strip
                 Section {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 8) {

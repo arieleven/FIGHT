@@ -248,7 +248,6 @@ enum WorkoutCategory: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// True for combat round-based disciplines; false for continuous walks/runs/tests.
     var usesRoundTimerByDefault: Bool {
         switch self {
         case .muayThai, .kickboxing, .heavyBag, .padWork, .sparring, .bjj:
@@ -330,7 +329,6 @@ enum BagTempo: String, Codable, CaseIterable, Identifiable {
         case .burnout:
             return 2.2...4.0
         case .variable:
-            // Starts technical in first 35%, ramps to fight pace, finishes with last-30s burnout
             if roundProgress < 0.35 {
                 return 7.0...9.5
             } else if roundProgress < 0.80 {
@@ -471,7 +469,7 @@ struct WorkoutPOI: Codable, Identifiable, Equatable {
     }
 }
 
-struct GhostSession: Identifiable, Equatable {
+struct GhostSession: Identifiable, Equatable, Hashable {
     let id: UUID
     let title: String
     let subtitle: String
@@ -479,6 +477,10 @@ struct GhostSession: Identifiable, Equatable {
     let roundStats: [RoundStat]
     let avgBPM: Int
     let peakBPM: Int
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 
     func interpolatedBPM(at elapsed: TimeInterval) -> Int? {
         guard !samples.isEmpty else { return nil }
@@ -512,7 +514,7 @@ struct SavedWorkout: Codable, Identifiable {
     let minBPM: Int
     let activeCalories: Double
     let bmrCalories: Double
-    let calories: Double // Total = Active + BMR
+    let calories: Double
     let epocBonusCalories: Double
     let trimpScore: Double
     let cardiacDriftPercent: Double
@@ -673,7 +675,6 @@ struct SavedWorkout: Codable, Identifiable {
 // MARK: - Physiology & Analytics Engine
 
 enum FighterAnalytics {
-    /// Keytel et al. Active Exercise Calories + Mifflin-St Jeor Resting BMR Calories
     static func calculateCalorieBreakdown(bpm: Int, durationSeconds: TimeInterval, profile: AthleteProfile) -> (active: Double, bmr: Double, total: Double) {
         let minutes = durationSeconds / 60.0
         guard minutes > 0 else { return (0, 0, 0) }
@@ -747,7 +748,6 @@ enum FighterAnalytics {
         var pois: [WorkoutPOI] = []
         let zones = profile.activeZones
 
-        // 1. Peak Heart Rate
         if let peak = samples.max(by: { $0.bpm < $1.bpm }) {
             let pct = Int(round((Double(peak.bpm) / Double(profile.effectiveMaxHR)) * 100))
             pois.append(WorkoutPOI(
@@ -761,7 +761,6 @@ enum FighterAnalytics {
             ))
         }
 
-        // 2. Best Automatic In-Workout HRR-60 Recovery
         if let bestHRR = autoHRREvents.max(by: { $0.dropBPM < $1.dropBPM }) {
             pois.append(WorkoutPOI(
                 elapsedSeconds: bestHRR.elapsedSeconds,
@@ -785,7 +784,6 @@ enum FighterAnalytics {
             ))
         }
 
-        // 3. Fastest 20-Second Surge
         for i in 0..<samples.count {
             if let future = samples[i...].first(where: { $0.elapsedSeconds - samples[i].elapsedSeconds >= 20 && $0.elapsedSeconds - samples[i].elapsedSeconds <= 26 }) {
                 let rise = future.bpm - samples[i].bpm
@@ -804,7 +802,6 @@ enum FighterAnalytics {
             }
         }
 
-        // 4. First Zone 5 Redline Crossing
         if let redline = samples.first(where: { $0.bpm > zones.z4Max }) {
             pois.append(WorkoutPOI(
                 elapsedSeconds: redline.elapsedSeconds,

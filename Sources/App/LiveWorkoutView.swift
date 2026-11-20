@@ -9,13 +9,11 @@ struct LiveWorkoutView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @StateObject private var audioCoach = AudioCoachEngine()
 
-    // Discipline & Tag State
     @State private var selectedCategory: WorkoutCategory = .muayThai
     @State private var selectedDrillTag: DrillTag = .technical
     @State private var rpeScore: Int = 7
     @State private var workoutNotes: String = ""
 
-    // Workout Session State
     @State private var isRecording = false
     @State private var startTime: Date?
     @State private var elapsedSeconds: TimeInterval = 0
@@ -25,7 +23,6 @@ struct LiveWorkoutView: View {
     @State private var bmrCalories: Double = 0
     @State private var timer: Timer?
 
-    // Discipline-Aware Round Bell Timer
     @State private var roundTimerEnabled = true
     @State private var workDurationSeconds = 180
     @State private var restDurationSeconds = 60
@@ -37,10 +34,8 @@ struct LiveWorkoutView: View {
     @State private var roundEndPeakBPM: Int = 0
     @State private var completedRounds: [RoundStat] = []
 
-    // Guided Heavy Bag & Combination Metronome
     @State private var bagConfig = BagCoachConfig()
 
-    // Automatic In-Workout HRR-60 Detection
     private struct PendingRecoveryTracker {
         let startElapsed: TimeInterval
         let peakBPM: Int
@@ -51,14 +46,11 @@ struct LiveWorkoutView: View {
     @State private var autoHRREvents: [AutoHRREvent] = []
     @State private var latestAutoHRRBanner: String?
 
-    // 30-Min LTHR Field Test State
     @State private var lthrTestResultBanner: Int?
 
-    // Opponent Pace Simulator ("Ghost")
     @State private var selectedGhost: GhostSession?
     @State private var showingTCXImporter = false
 
-    // Live Audio Coaching Tracking
     @State private var lastAnnouncedZone: Int = 0
     @State private var lastZone2AlertTime: TimeInterval = -999
     @State private var lastPeriodicMinute: Int = 0
@@ -68,10 +60,8 @@ struct LiveWorkoutView: View {
     @State private var announced30sWarning = false
     @State private var announced10sWarning = false
 
-    // Live Activity
     @State private var currentActivity: Activity<WorkoutActivityAttributes>?
 
-    // Sheets
     @State private var showingDeviceSheet = false
     @State private var showingPostWorkoutSummary = false
     @State private var finishedWorkout: SavedWorkout?
@@ -101,7 +91,6 @@ struct LiveWorkoutView: View {
                         .background(Color.cyan.opacity(0.16), in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    // Active Fighter & Discipline Selector
                     VStack(spacing: 10) {
                         HStack {
                             Label(profile.name, systemImage: "figure.boxing")
@@ -149,31 +138,24 @@ struct LiveWorkoutView: View {
                     .padding(12)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
 
-                    // Primary Live BPM Hero Card + Active/Total Calories
                     heroBPMCard(currentZone: currentZone)
 
-                    // 20-Min LTHR Field Test Protocol Banner (when selected)
                     if selectedCategory == .lthrTest {
                         lthrFieldTestCard
                     }
 
-                    // Guided Heavy Bag & Combination Tempo Metronome Card
                     if selectedCategory != .walk && selectedCategory != .lthrTest {
                         guidedBagCoachCard
                     }
 
-                    // Discipline-Aware Round Bell Card (Hidden by default on Walk/Roadwork unless toggled)
                     if selectedCategory != .lthrTest {
                         roundBellCard
                     }
 
-                    // Opponent Pace Simulator ("Ghost") Card
                     ghostSimulatorCard
 
-                    // Live Sparkline (with Ghost Overlay if active)
                     liveSparklineCard
 
-                    // Start / Stop Controls
                     controlButtons
                 }
                 .padding()
@@ -217,8 +199,6 @@ struct LiveWorkoutView: View {
         }
     }
 
-    // MARK: - Discipline Defaults
-
     private func applyDisciplineDefaults(_ category: WorkoutCategory) {
         roundTimerEnabled = category.usesRoundTimerByDefault
         workDurationSeconds = category.defaultWorkSeconds
@@ -236,8 +216,6 @@ struct LiveWorkoutView: View {
             selectedDrillTag = .hardSparring
         }
     }
-
-    // MARK: - Connection Banner
 
     private var connectionBanner: some View {
         HStack(spacing: 12) {
@@ -270,8 +248,6 @@ struct LiveWorkoutView: View {
         .padding(12)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
     }
-
-    // MARK: - Hero BPM & Active/Total Calories Card
 
     private func heroBPMCard(currentZone: HeartRateZoneInfo) -> some View {
         let totalCalories = activeCalories + bmrCalories
@@ -312,7 +288,6 @@ struct LiveWorkoutView: View {
                     .foregroundStyle(.secondary)
             }
 
-            // Explicit Active vs. Total Calories + Timer
             HStack(spacing: 12) {
                 VStack(spacing: 2) {
                     Text("ELAPSED")
@@ -361,8 +336,6 @@ struct LiveWorkoutView: View {
         .padding(16)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
-
-    // MARK: - 20-Minute LTHR Field Test Card
 
     private var lthrFieldTestCard: some View {
         let warmupRemaining = max(0, 600 - Int(elapsedSeconds))
@@ -433,8 +406,6 @@ struct LiveWorkoutView: View {
         .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 14))
     }
 
-    // MARK: - Guided Heavy Bag & Combination Tempo Metronome
-
     private var guidedBagCoachCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -459,7 +430,6 @@ struct LiveWorkoutView: View {
 
             if bagConfig.enabled {
                 if isRecording {
-                    // Live Combination HUD
                     VStack(spacing: 6) {
                         Text(audioCoach.currentComboDisplay.isEmpty ? "READY — HANDS UP" : audioCoach.currentComboDisplay)
                             .font(.headline.weight(.heavy))
@@ -480,7 +450,6 @@ struct LiveWorkoutView: View {
                         }
                     }
                 } else {
-                    // Quick Preset + Configuration
                     HStack {
                         Button("30m • 3×1m Steady") {
                             bagConfig.totalMinutes = 30
@@ -553,8 +522,6 @@ struct LiveWorkoutView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Discipline-Aware Round Bell Timer Card
-
     private var roundBellCard: some View {
         let phaseTarget = isRestPeriod ? TimeInterval(restDurationSeconds) : TimeInterval(workDurationSeconds)
         let remaining = max(0, phaseTarget - phaseElapsed)
@@ -611,8 +578,6 @@ struct LiveWorkoutView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Opponent Pace Simulator ("Ghost") Card
-
     private var ghostSimulatorCard: some View {
         let availableGhosts = workoutStore.allAvailableGhosts()
         let ghostBPM = selectedGhost?.interpolatedBPM(at: elapsedSeconds)
@@ -667,8 +632,6 @@ struct LiveWorkoutView: View {
         .padding(14)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
-
-    // MARK: - Live Sparkline (with Ghost Overlay)
 
     private var liveSparklineCard: some View {
         let recent = Array(samples.suffix(120))
@@ -729,8 +692,6 @@ struct LiveWorkoutView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    // MARK: - Control Buttons
-
     private var controlButtons: some View {
         VStack(spacing: 10) {
             if !isRecording {
@@ -772,8 +733,6 @@ struct LiveWorkoutView: View {
             }
         }
     }
-
-    // MARK: - Recording & Real-Time Coaching Engine
 
     private var liveAverageBPM: Int {
         guard !samples.isEmpty else { return bleManager.currentBPM }
@@ -862,14 +821,10 @@ struct LiveWorkoutView: View {
                 roundEndPeakBPM = max(roundEndPeakBPM, bpm)
             }
 
-            // 1. Automatic In-Workout HRR-60 Detection
             evaluateAutomaticHRR(bpm: bpm, profile: profile)
-
-            // 2. Live AirPods Audio HR Coaching
             evaluateLiveAudioCoaching(bpm: bpm, zone: z, profile: profile, coachCfg: coachCfg)
         }
 
-        // 3. Round Bell Progression
         if roundTimerEnabled {
             phaseElapsed += 1.0
             let target = isRestPeriod ? TimeInterval(restDurationSeconds) : TimeInterval(workDurationSeconds)
@@ -887,7 +842,6 @@ struct LiveWorkoutView: View {
 
             if phaseElapsed >= target {
                 if isRestPeriod {
-                    // Start Next Round
                     let stoolDrop: Int? = (roundEndPeakBPM > 0 && bpm > 0) ? max(0, roundEndPeakBPM - bpm) : nil
                     let roundSamples = samples.filter { $0.elapsedSeconds >= currentRoundStartElapsed && $0.elapsedSeconds <= (elapsedSeconds - TimeInterval(restDurationSeconds)) }
                     let avgR = roundSamples.isEmpty ? bpm : roundSamples.map(\.bpm).reduce(0, +) / roundSamples.count
@@ -923,7 +877,6 @@ struct LiveWorkoutView: View {
             }
         }
 
-        // 4. 30-Minute LTHR Field Test Auto-Completion
         if selectedCategory == .lthrTest {
             if Int(elapsedSeconds) == 600 {
                 audioCoach.playBellCue()
@@ -960,7 +913,6 @@ struct LiveWorkoutView: View {
 
         if var tracker = pendingRecovery {
             tracker.lowestSeenBPM = min(tracker.lowestSeenBPM, bpm)
-            // If athlete surges back up above peak + 3 during an open drill, reset tracker
             if !isRestPeriod && bpm > tracker.peakBPM + 3 {
                 pendingRecovery = nil
                 return
@@ -983,7 +935,6 @@ struct LiveWorkoutView: View {
                 pendingRecovery = nil
             }
         } else if !roundTimerEnabled && bpm >= highEffortThreshold {
-            // Detect natural peak-to-recovery inflection during open drills/roadwork
             if samples.count >= 12 {
                 let recent10 = samples.suffix(10).map(\.bpm)
                 if let localPeak = recent10.max(), localPeak >= highEffortThreshold && (localPeak - bpm) >= 5 {
@@ -1001,7 +952,6 @@ struct LiveWorkoutView: View {
     private func evaluateLiveAudioCoaching(bpm: Int, zone: HeartRateZoneInfo, profile: AthleteProfile, coachCfg: AudioCoachSettings) {
         guard coachCfg.masterEnabled else { return }
 
-        // A. Zone 2 Ceiling Guard (crucial for aerobic roadwork)
         if coachCfg.zone2CeilingAlert && (selectedCategory == .roadwork || selectedDrillTag == .aerobicZ2) {
             let z2Max = profile.activeZones.z2Max
             if bpm > z2Max && (elapsedSeconds - lastZone2AlertTime) >= 45 {
@@ -1010,7 +960,6 @@ struct LiveWorkoutView: View {
             }
         }
 
-        // B. Zone Threshold Crossings
         if coachCfg.announceZoneCrossings && zone.number != lastAnnouncedZone && elapsedSeconds > 15 {
             if zone.number >= 3 {
                 audioCoach.announceCoachingCue("Entering \(zone.name), \(bpm) B P M.", enabled: true)
@@ -1020,7 +969,6 @@ struct LiveWorkoutView: View {
             lastAnnouncedZone = zone.number
         }
 
-        // C. Sustained Redline Alert (>92% MaxHR for 45s)
         let redlineCutoff = Int(Double(profile.effectiveMaxHR) * 0.92)
         if bpm >= redlineCutoff {
             redlineSecondsAccumulator += 1
@@ -1032,7 +980,6 @@ struct LiveWorkoutView: View {
             redlineSecondsAccumulator = 0
         }
 
-        // D. Ghost Opponent Delta Alert
         if coachCfg.announceGhostDelta, let ghost = selectedGhost, let gBPM = ghost.interpolatedBPM(at: elapsedSeconds), (elapsedSeconds - lastGhostAlertTime) >= 75 {
             let diff = bpm - gBPM
             if abs(diff) >= 8 {
@@ -1045,7 +992,6 @@ struct LiveWorkoutView: View {
             }
         }
 
-        // E. Periodic Check-In
         if coachCfg.periodicMinutes > 0 {
             let currentMinute = Int(elapsedSeconds) / 60
             if currentMinute > 0 && currentMinute != lastPeriodicMinute && (currentMinute % coachCfg.periodicMinutes == 0) {
@@ -1070,7 +1016,6 @@ struct LiveWorkoutView: View {
         let maxBPM = bpms.max() ?? avgBPM
         let minBPM = bpms.min() ?? avgBPM
 
-        // Apply 20-Min LTHR Test Result Automatically if applicable
         if selectedCategory == .lthrTest {
             let trialSamples = samples.filter { $0.elapsedSeconds >= 600 }
             let source = trialSamples.count >= 30 ? trialSamples : samples
@@ -1147,8 +1092,6 @@ struct LiveWorkoutView: View {
         workoutNotes = ""
         showingPostWorkoutSummary = true
     }
-
-    // MARK: - Live Activity (Lock Screen & Dynamic Island)
 
     private func startLiveActivity() {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }

@@ -35,8 +35,6 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
-    // MARK: - iPhone Files App Directory Structure ("On My iPhone / Coospo Workout")
-
     var documentsDirectory: URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }
@@ -83,8 +81,6 @@ final class WorkoutStore: ObservableObject {
         runLosslessAutoCompression()
     }
 
-    // MARK: - Fighter Profiles Persistence in Files App
-
     private struct ProfileContainer: Codable {
         var activeProfileID: UUID
         var profiles: [AthleteProfile]
@@ -101,7 +97,6 @@ final class WorkoutStore: ObservableObject {
             return
         }
 
-        // Migrate legacy UserDefaults profiles into Files app seamlessly
         if let legacyData = UserDefaults.standard.data(forKey: legacyProfilesKey),
            let decoded = try? decoder.decode([AthleteProfile].self, from: legacyData),
            !decoded.isEmpty {
@@ -148,8 +143,6 @@ final class WorkoutStore: ObservableObject {
         }
         saveProfilesToDisk()
     }
-
-    // MARK: - Workout Storage & Lossless LZFSE (.cspk) Compression
 
     func loadWorkouts() {
         guard let files = try? FileManager.default.contentsOfDirectory(at: workoutsDirectory, includingPropertiesForKeys: nil) else {
@@ -281,8 +274,6 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
-    // MARK: - Fight Camp ACWR (Acute:Chronic Workload Ratio)
-
     var acuteChronicWorkloadRatio: (ratio: Double, status: String) {
         let now = Date()
         let sevenDaysAgo = now.addingTimeInterval(-7 * 86400)
@@ -307,8 +298,6 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
-    // MARK: - TCX Import & Export (Opponent Pace Simulator + Strava/Garmin)
-
     func importTCXGhost(from url: URL) -> GhostSession? {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -318,7 +307,6 @@ final class WorkoutStore: ObservableObject {
             return nil
         }
 
-        // Copy TCX into GhostOpponents folder in Files app for future reuse
         let dest = ghostsDirectory.appendingPathComponent(url.lastPathComponent)
         try? data.write(to: dest, options: .atomic)
         loadExternalGhosts()
@@ -421,8 +409,6 @@ final class WorkoutStore: ObservableObject {
         workouts.filter(\.isCompressedArchive).count
     }
 }
-
-// MARK: - TCX XML Parser for Ghost Opponent Mode
 
 final class TCXStreamParser: NSObject, XMLParserDelegate {
     private var samples: [HeartRatePoint] = []

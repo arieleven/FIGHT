@@ -1,4 +1,4 @@
-name: Build iOS IPA
+name: Build Unsigned IPA
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-26
+    runs-on: macos-latest
 
     steps:
       - name: Checkout repository
@@ -16,10 +16,10 @@ jobs:
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate Xcode project
+      - name: Generate Xcode Project
         run: xcodegen generate
 
-      - name: Build unsigned iOS app
+      - name: Build Unsigned Release App
         run: |
           xcodebuild \
             -project CoospoTracker.xcodeproj \
@@ -31,13 +31,13 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO
 
-      - name: Package IPA
+      - name: Package Unsigned IPA
         run: |
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/CoospoTracker.app Payload/
-          zip -qr CoospoTracker.ipa Payload
+          zip -r CoospoTracker.ipa Payload
 
-      - name: Upload IPA Artifact
+      - name: Upload Unsigned IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CoospoTracker-IPA
