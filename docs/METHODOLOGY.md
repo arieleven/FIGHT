@@ -67,7 +67,13 @@ This page documents how FIGHT turns heart-rate data into ratings, readiness, pla
 
 [`CoachEngine.swift`](../Sources/App/CoachEngine.swift)
 
-Banister impulse-response model on daily TRIMP, with an 84-day warm-up window:
+**Session load.** By default a session's load is its TRIMP. Once you rate the session's effort (RPE 1–10), the load becomes the mean of TRIMP and Foster's session-RPE, converted to TRIMP-equivalent units:
+
+`load = (TRIMP + RPE × minutes × 0.25) / 2`
+
+This corrects for work where heart rate under-reads the true cost: sparring, clinch, grappling and strength sessions.
+
+Banister impulse-response model on daily session load, with an 84-day warm-up window:
 
 - **Fitness (CTL)**: `CTL += (load − CTL) / 42`
 - **Fatigue (ATL)**: `ATL += (load − ATL) / 7`
@@ -166,6 +172,31 @@ Every 4th week in base or build is a **deload** at 70% of target.
 
 ---
 
+## 11. Bag coach timing
+
+[`AudioCoachEngine.swift`](../Sources/App/AudioCoachEngine.swift) · [`BagCoach.swift`](../Sources/App/BagCoach.swift)
+
+Each cycle has three steps:
+1. **Call the combo.** The pre-rendered phrases are scheduled back-to-back, and the next step waits for real playback completion.
+2. **Allow throwing time:** 0.35 s per punch, 0.7 s per kick, 0.5 s per knee or defensive move, and 0.4 s per elbow (×0.8 at Burnout).
+3. **Tempo reset**, then the next combo.
+
+| Tempo | Reset after throwing |
+|---|---|
+| Technical | 3.5–5.5 s |
+| Steady | 2.0–3.2 s |
+| Fight Pace | 1.0–2.0 s |
+| Burnout | 0.3–0.8 s (combos capped at 3 strikes) |
+| Variable | 2.5–3.5 → 1.2–2.2 → 0.4–1.0 s as the round progresses |
+
+**Adaptive tempo** scales the reset ×0.7 when HR is below the coach plan's band, and ×1.4 when above it.
+
+**Phrase rendering.** Phrases are rendered once, with leading and trailing silence trimmed (amplitude threshold 0.012, 25 ms padding).
+
+**Separate channels.** Combos, coaching cues and bells play on separate audio channels. Coaching cues wait for a gap between combos and are dropped after 12 s. The bell flushes any combo in progress.
+
+**Combos** come from a curated library of boxing, kickboxing, Muay Thai and defence-counter combinations. They're filtered by enabled strike types and difficulty (strike-count ranges of 1–3, 2–4, 3–5 and 3–6), and never repeat within the last 4 combos. Optionally (35%), a punch-ending combo closes with an opposite-side low kick (the Dutch finish).
+
 ## References
 
 - Banister EW. *Modeling elite athletic performance.* In: Physiological Testing of Elite Athletes, 1991.
@@ -179,5 +210,7 @@ Every 4th week in base or build is a **deload** at 70% of target.
 - Mifflin MD, St Jeor ST et al. *A new predictive equation for resting energy expenditure in healthy individuals.* Am J Clin Nutr, 1990.
 - Armstrong LE et al. *Urinary indices of hydration status.* Int J Sport Nutr, 1994.
 - Friel J. *The Triathlete's Training Bible* (LTHR field test protocol).
+- Foster C et al. *A new approach to monitoring exercise training.* J Strength Cond Res, 2001 (session-RPE).
+- Reale R, Slater G, Burke LM. *Acute-weight-loss strategies for combat sports and applications to Olympic success.* Int J Sports Physiol Perform, 2017 (rehydration guidance).
 
 *All thresholds are coaching heuristics derived from this literature. They are designed to guide training decisions, not to diagnose.*

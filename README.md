@@ -47,8 +47,14 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 
 ### 🥊 Live Corner: real-time round tracking
 - **Live BPM and zones**: Garmin-style display with a 5-zone bar, current zone, elapsed time, and active vs. total calories
-- **Round bell and corner timer**: work/rest intervals from 0:30 to 5:00, round warnings, and haptics on every bell
-- **Guided bag work**: randomized voice combo callouts (punches, kicks, knees, elbows, defense) at a tempo you choose, mixed with your music
+- **Round bell and corner timer**: work/rest intervals from 0:30 to 5:00, a gym-style bell and clapper, "Round 3 in 10 seconds" calls, and haptics on every bell
+- **Crash-safe recording**: progress is autosaved every 30 seconds. If the app is closed mid-session, FIGHT offers to recover the workout on next launch
+- **Coached bag work**: realistic kickboxing and Muay Thai combinations called out loud. The next combo is only called after you've heard the last one and had time to throw it.
+  - **Your fighting style:** orthodox or southpaw, number calling (1 = jab, 2 = cross…), and four difficulty levels
+  - **Combo variety:** a Dutch-style kick finish, defence and counters, and your own custom drills
+  - **Pace:** five tempos from Technical to Burnout, with adaptive tempo that follows your heart-rate plan
+  - **Round structure:** a "Final round" call, a 10-second clapper, a triple bell at round end, and a "Punch out!" flurry in each round's last 10 seconds
+  - **Readable from the bag:** each strike lights up as it's spoken, in a natural voice (Enhanced voices when installed), with your music ducked underneath
 - **Live audio coaching through AirPods**: zone changes, Zone 2 ceiling alerts, sustained-redline warnings, stool-recovery drop, periodic HR updates
 - **Coach plan mode**: a target HR band on screen, with spoken alerts when you drift above it
 - **Ghost sparring**: race your own past session (or an imported `.tcx`) and see the HR delta live
@@ -71,12 +77,16 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
   | **Intensity Mix** | Easy / tempo / hard distribution vs. a polarized fighter model |
 - **Next-session prescription**: recovery day, technical flow, or a targeted session for your weakest metric
 - **Training-load chart**: fitness, fatigue and form (Banister impulse-response model)
-- **Coach Review on every workout**: intent match, round consistency, recovery, pacing and peak output, plus "next time" tips
-- **2-minute morning readiness check**: resting HR plus HRV (RMSSD), with artifact correction
+- **Coach Review on every workout**: intent match, round consistency, recovery, pacing, peak output and coach-plan adherence, plus "next time" tips
+- **Post-session effort rating (RPE)**: blends with heart rate into training load, because HR alone under-reads sparring, clinch and strength work
+- **Auto-detects a new max HR** and prompts you to update your zones
+- **2-minute morning readiness check**: resting HR plus HRV (RMSSD), with artifact correction. You can also import resting HR from Apple Health (e.g. Apple Watch)
 
 ### 📅 Fight Camp: plan, cut, report
 - **Periodization planner**: set the fight date and camp length (4–16 weeks) to get weekly load targets, deload weeks, key sessions and intensity mix per phase, tracked against what you actually did
-- **Weight-cut tracker**: daily weigh-ins, trend, required kg/week, projected fight-night weight, and urine-colour hydration logging
+- **Weight-cut tracker**: daily weigh-ins (or imported from a smart scale via Apple Health), trend, required rate per week, projected fight-night weight, urine-colour hydration logging, and kg or lb
+- **Rehydration plan**: a fight-week guide sized to how much you cut (fluids, electrolytes, carbohydrate)
+- **Morning reminder**: a daily nudge to weigh in and take your readiness check
 - **Dehydration and safety warnings**: rapid drops, dark urine, resting HR rising while weight falls, HRV suppression, unrealistic targets, and >5% left to cut in fight week
 - **Body signals**: morning resting HR and HRV charted alongside your cut
 - **Weekly PDF report for your trainer**: ratings, sessions with review scores, camp progress, weight, health flags and the suggested next session
@@ -86,11 +96,12 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - TRIMP load, cardiac drift, RMSSD, EPOC estimate and aerobic efficiency per session
 - Overlay any two sessions to compare
 - **TCX export** to Strava, Garmin Connect, TrainingPeaks and more
+- **Full backup**: export all your data as a single zip file, to iCloud Drive or Files
 - Lossless LZFSE archive compression for older sessions
 - **Multiple fighter profiles** with individual zones (Karvonen, LTHR, % max or manual)
 
 ### ❤️ Apple Health
-Finished sessions are saved as Health workouts, including the full heart-rate trace and active calories. Each discipline is mapped to its matching Health activity type: Kickboxing, Boxing, Martial Arts, Running and so on.
+Finished sessions are saved as Health workouts, including the full heart-rate trace and active calories. Each discipline is mapped to its matching Health activity type: Kickboxing, Boxing, Martial Arts, Running and so on. FIGHT can also read body weight and resting heart rate from Health to fill weigh-ins and readiness automatically.
 
 ## How the coach thinks
 
@@ -159,7 +170,7 @@ open FIGHT.xcodeproj
 
 Set your signing team on both targets (`FIGHT` and `FIGHTWidget`), enable the HealthKit capability, and run on a device. Bluetooth isn't available in the simulator.
 
-**In CI:** [`.github/workflows/build.yml`](.github/workflows/build.yml) generates the project, builds an unsigned Release app, checks that the required `Info.plist` keys are present (Bluetooth, background modes, Live Activities, Health), embeds the HealthKit entitlement with an ad-hoc signature, and uploads the IPA.
+**In CI:** [`.github/workflows/build.yml`](.github/workflows/build.yml) generates the project, runs the unit tests for the analysis engines on an iOS simulator, builds an unsigned Release app, checks that the required `Info.plist` keys are present (Bluetooth, background modes, Live Activities, Health), embeds the HealthKit entitlement with an ad-hoc signature, and uploads the IPA.
 
 > The `Info.plist` files in `Sources/` are the single source of truth. `project.yml` deliberately has no XcodeGen `info:` blocks, because those would overwrite the plists at generation time.
 
@@ -171,13 +182,17 @@ FIGHT/
 ├── Config/
 │   └── FIGHT.entitlements          # HealthKit
 ├── .github/workflows/build.yml     # Cloud build → IPA
+├── Tests/FIGHTTests/               # Unit tests (HRV, coach, camp, combos)
 ├── docs/                           # Methodology, logo and banner
 └── Sources/
     ├── App/
     │   ├── FightApp.swift              # Tab shell and dependency injection
     │   ├── BLEHeartRateManager.swift   # Universal BLE Heart Rate Profile, RR, device info, auto-reconnect
-    │   ├── LiveWorkoutView.swift       # Live Corner: rounds, zones, plan mode, Live Activity
-    │   ├── AudioCoachEngine.swift      # Synthesized voice combos, bells, spoken coaching
+    │   ├── WorkoutSession.swift        # Live workout engine: timing, rounds, autosave, saving
+    │   ├── LiveWorkoutView.swift       # Live Corner UI
+    │   ├── BagCoach.swift              # Strikes, stance, difficulty, combo generator
+    │   ├── BagSettingsView.swift       # Bag coach settings and custom-combo builder
+    │   ├── AudioCoachEngine.swift      # Sequenced voice combos, bells, clapper, spoken coaching
     │   ├── CoachEngine.swift           # Ratings, load model, prescriptions, workout reviews
     │   ├── HRVMath.swift               # RR artifact correction, RMSSD, DFA α1, VT1 estimate
     │   ├── CoachView.swift             # Coach tab
@@ -197,7 +212,7 @@ FIGHT/
 ## Privacy
 
 - **No account, no server, no analytics.** All sessions, check-ins and weigh-ins are stored as JSON in the app's Documents folder, which you can browse in the iOS Files app.
-- Data leaves the device only when you choose to: Apple Health export, TCX export, or the PDF report.
+- Data leaves the device only when you choose to: Apple Health export, TCX export, the PDF report, or a backup zip.
 
 ## Roadmap
 
@@ -206,7 +221,6 @@ FIGHT/
 - [ ] Apple Watch motion-based strike counting and output-per-heartbeat efficiency
 - [ ] Sparring video synced to the HR trace
 - [ ] Dual-sensor mode (e.g. armband + chest strap) for lab-grade HRV in hard rounds
-- [ ] Imperial units
 
 Have an idea that would help fighters train smarter? [Open an issue](https://github.com/drivepulator/FIGHT/issues).
 
