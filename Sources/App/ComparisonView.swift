@@ -1,54 +1,43 @@
 import SwiftUI
 import Charts
 
-struct OverlayPoint: Identifiable {
-    let id = UUID()
-    let sessionLabel: String
-    let elapsedSeconds: Double
-    let bpm: Int
-}
-
 struct ComparisonView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @Environment(\.dismiss) private var dismiss
 
     let initialBaselineWorkout: SavedWorkout?
 
-    @State private var sessionAID: UUID?
-    @State private var sessionBID: UUID?
+    @State private var baselineID: UUID?
+    @State private var contenderID: UUID?
 
-    private var workouts: [SavedWorkout] {
-        workoutStore.activeProfileWorkouts
+    private var baseline: SavedWorkout? {
+        workoutStore.workouts.first { $0.id == baselineID }
     }
 
-    private var workoutA: SavedWorkout? {
-        workouts.first(where: { $0.id == sessionAID }) ?? workouts.first
-    }
-
-    private var workoutB: SavedWorkout? {
-        workouts.first(where: { $0.id == sessionBID }) ?? (workouts.count > 1 ? workouts[1] : workouts.first)
+    private var contender: SavedWorkout? {
+        workoutStore.workouts.first { $0.id == contenderID }
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
-                    if workouts.count < 2 {
-                        Text("Log at least 2 workouts to overlay and compare your cardiovascular progression.")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding()
+                    sessionSelectors
+
+                    if let base = baseline, let cont = contender {
+                        overlayChartCard(baseline: base, contender: cont)
+                        headToHeadMetricsCard(baseline: base, contender: cont)
                     } else {
-                        pickerCard
-                        if let wA = workoutA, let wB = workoutB {
-                            overlayChart(wA: wA, wB: wB)
-                            deltaComparisonTable(wA: wA, wB: wB)
-                        }
+                        ContentUnavailableView(
+                            "Select Two Workouts",
+                            systemImage: "square.stack.3d.up",
+                            description: Text("Compare sparring sessions, bag workouts, or roadwork progress side-by-side.")
+                        )
                     }
                 }
                 .padding()
             }
-            .navigationTitle("Session Overlay")
+            .navigationTitle("Compare Sessions")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -56,139 +45,162 @@ struct ComparisonView: View {
                 }
             }
             .onAppear {
-                if let initW = initialBaselineWorkout {
-                    sessionAID = initW.id
-                    let sameCategoryOther = workouts.first(where: { $0.id != initW.id && $0.category == initW.category })
-                        ?? workouts.first(where: { $0.id != initW.id })
-                    sessionBID = sameCategoryOther?.id
-                } else {
-                    sessionAID = workouts.first?.id
-                    sessionBID = workouts.dropFirst().first?.id
+                if baselineID == nil {
+                    baselineID = initialBaselineWorkout?.id ?? workoutStore.workouts.first?.id
+                }
+                if contenderID == nil {
+                    contenderID = workoutStore.workouts.first(where: { $0.id != baselineID })?.id
                 }
             }
         }
     }
 
-    private var pickerCard: some View {
-        VStack(spacing: 12) {
+    private var sessionSelectors: some View {
+        VStack(spacing: 10) {
             HStack {
-                Circle().fill(Color.cyan).frame(width: 10, height: 10)
-                Text("Current (A)")
+                Circle().fill(.cyan).frame(width: 10, height: 10)
+                Text("Baseline")
                     .font(.caption.weight(.bold))
                 Spacer()
-                Picker("Session A", selection: $sessionAID) {
-                    ForEach(workouts) { w in
+                Picker("Baseline", selection: $baselineID) {
+                    ForEach(workoutStore.workouts) { w in
                         Text("\(w.category.rawValue) • \(w.startDate.formatted(date: .abbreviated, time: .omitted))").tag(Optional(w.id))
                     }
                 }
+                .pickerStyle(.menu)
             }
 
             Divider()
 
             HStack {
-                Circle().fill(Color.orange).frame(width: 10, height: 10)
-                Text("Baseline (B)")
+                Circle().fill(.orange).frame(width: 10, height: 10)
+                Text("Compare")
                     .font(.caption.weight(.bold))
                 Spacer()
-                Picker("Session B", selection: $sessionBID) {
-                    ForEach(workouts) { w in
+                Picker("Compare", selection: $contenderID) {
+                    ForEach(workoutStore.workouts) { w in
                         Text("\(w.category.rawValue) • \(w.startDate.formatted(date: .abbreviated, time: .omitted))").tag(Optional(w.id))
                     }
                 }
+                .pickerStyle(.menu)
             }
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func overlayChart(wA: SavedWorkout, wB: SavedWorkout) -> some View {
-        let samplesA = downsample(workoutStore.resolvedSamples(for: wA), label: "Current (A)")
-        let samplesB = downsample(workoutStore.resolvedSamples(for: wB), label: "Baseline (B)")
-        let combined = samplesA + samplesB
+    private func overlayChartCard(baseline: SavedWorkout, contender: SavedWorkout) -> some View {
+        let baseSamples = downsample(workoutStore.resolvedSamples(for: baseline), maxPoints: 180)
+        let contSamples = downsample(workoutStore.resolvedSamples(for: contender), maxPoints: 180)
 
         return VStack(alignment: .leading, spacing: 10) {
             Text("HEART RATE CURVE OVERLAY")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 
-            Chart(combined) { pt in
-                LineMark(
-                    x: .value("Elapsed (s)", pt.elapsedSeconds),
-                    y: .value("BPM", pt.bpm)
-                )
-                .foregroundStyle(by: .value("Session", pt.sessionLabel))
-                .lineStyle(StrokeStyle(lineWidth: 2.2))
-            }
-            .chartForegroundStyleScale([
-                "Current (A)": Color.cyan,
-                "Baseline (B)": Color.orange
-            ])
-            .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 5)) { val in
-                    AxisGridLine()
-                    AxisValueLabel {
-                        if let sec = val.as(Double.self) {
-                            Text("\(Int(sec) / 60)m")
-                                .font(.caption2)
-                        }
+            if baseSamples.count >= 2 && contSamples.count >= 2 {
+                Chart {
+                    ForEach(baseSamples) { pt in
+                        LineMark(
+                            x: .value("Elapsed", pt.elapsedSeconds),
+                            y: .value("BPM", pt.bpm)
+                        )
+                        .foregroundStyle(by: .value("Session", "Baseline"))
+                    }
+                    ForEach(contSamples) { pt in
+                        LineMark(
+                            x: .value("Elapsed", pt.elapsedSeconds),
+                            y: .value("BPM", pt.bpm)
+                        )
+                        .foregroundStyle(by: .value("Session", "Compare"))
                     }
                 }
+                .chartForegroundStyleScale([
+                    "Baseline": Color.cyan,
+                    "Compare": Color.orange
+                ])
+                .frame(height: 220)
             }
-            .frame(height: 230)
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func deltaComparisonTable(wA: SavedWorkout, wB: SavedWorkout) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("ADAPTATION DELTA (A VS B)")
+    private func headToHeadMetricsCard(baseline: SavedWorkout, contender: SavedWorkout) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("HEAD-TO-HEAD CONDITIONING DELTA")
                 .font(.caption.weight(.bold))
                 .foregroundStyle(.secondary)
 
-            deltaRow(metric: "Average HR", valA: "\(wA.averageBPM) BPM", valB: "\(wB.averageBPM) BPM", diff: wA.averageBPM - wB.averageBPM, lowerIsBetter: true)
-            deltaRow(metric: "Peak HR", valA: "\(wA.maxBPM) BPM", valB: "\(wB.maxBPM) BPM", diff: wA.maxBPM - wB.maxBPM, lowerIsBetter: false)
-            if let hA = wA.hrr60Drop, let hB = wB.hrr60Drop {
-                deltaRow(metric: "HRR-60 Drop", valA: "-\(hA) BPM", valB: "-\(hB) BPM", diff: hA - hB, lowerIsBetter: false)
-            }
-            if let sA = wA.avgInterRoundDrop, let sB = wB.avgInterRoundDrop {
-                deltaRow(metric: "Stool Recovery", valA: "-\(sA) BPM", valB: "-\(sB) BPM", diff: sA - sB, lowerIsBetter: false)
+            deltaRow(
+                metric: "Average HR",
+                baseVal: "\(baseline.averageBPM) BPM",
+                contVal: "\(contender.averageBPM) BPM",
+                diff: contender.averageBPM - baseline.averageBPM,
+                lowerIsBetter: true
+            )
+            deltaRow(
+                metric: "Peak HR",
+                baseVal: "\(baseline.maxBPM) BPM",
+                contVal: "\(contender.maxBPM) BPM",
+                diff: contender.maxBPM - baseline.maxBPM,
+                lowerIsBetter: false
+            )
+            deltaRow(
+                metric: "Active Burn",
+                baseVal: "\(Int(baseline.activeCalories)) kcal",
+                contVal: "\(Int(contender.activeCalories)) kcal",
+                diff: Int(contender.activeCalories - baseline.activeCalories),
+                lowerIsBetter: false
+            )
+            deltaRow(
+                metric: "TRIMP Load",
+                baseVal: "\(Int(baseline.trimpScore))",
+                contVal: "\(Int(contender.trimpScore))",
+                diff: Int(contender.trimpScore - baseline.trimpScore),
+                lowerIsBetter: false
+            )
+            if let bHRR = baseline.hrr60Drop, let cHRR = contender.hrr60Drop {
+                deltaRow(
+                    metric: "Auto HRR-60",
+                    baseVal: "-\(bHRR) BPM",
+                    contVal: "-\(cHRR) BPM",
+                    diff: cHRR - bHRR,
+                    lowerIsBetter: false
+                )
             }
         }
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private func deltaRow(metric: String, valA: String, valB: String, diff: Int, lowerIsBetter: Bool) -> some View {
+    private func deltaRow(metric: String, baseVal: String, contVal: String, diff: Int, lowerIsBetter: Bool) -> some View {
         let improved = lowerIsBetter ? (diff < 0) : (diff > 0)
-        let diffText = diff == 0 ? "0" : (diff > 0 ? "+\(diff)" : "\(diff)")
-
         return HStack {
             Text(metric)
                 .font(.subheadline)
             Spacer()
-            Text(valA)
-                .font(.subheadline.weight(.bold).monospacedDigit())
-                .foregroundStyle(.cyan)
-            Text("vs \(valB)")
+            Text(baseVal)
                 .font(.caption.monospacedDigit())
+                .foregroundStyle(.cyan)
+            Text("→")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(diffText)
-                .font(.caption.weight(.heavy).monospacedDigit())
+            Text(contVal)
+                .font(.caption.monospacedDigit().weight(.bold))
+                .foregroundStyle(.orange)
+            Text(diff == 0 ? "0" : (diff > 0 ? "+\(diff)" : "\(diff)"))
+                .font(.caption2.monospacedDigit().weight(.bold))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background((diff == 0 ? Color.gray : (improved ? Color.green : Color.orange)).opacity(0.2), in: Capsule())
-                .foregroundStyle(diff == 0 ? .gray : (improved ? .green : .orange))
+                .background((diff == 0 ? Color.gray : (improved ? Color.green : Color.red)).opacity(0.2), in: Capsule())
+                .foregroundStyle(diff == 0 ? .secondary : (improved ? .green : .red))
         }
     }
 
-    private func downsample(_ pts: [HeartRatePoint], label: String) -> [OverlayPoint] {
-        guard pts.count > 240 else {
-            return pts.map { OverlayPoint(sessionLabel: label, elapsedSeconds: $0.elapsedSeconds, bpm: $0.bpm) }
-        }
-        let step = max(1, pts.count / 240)
-        return stride(from: 0, to: pts.count, by: step).map {
-            OverlayPoint(sessionLabel: label, elapsedSeconds: pts[$0].elapsedSeconds, bpm: pts[$0].bpm)
-        }
+    private func downsample(_ pts: [HeartRatePoint], maxPoints: Int) -> [HeartRatePoint] {
+        guard pts.count > maxPoints else { return pts }
+        let step = max(1, pts.count / maxPoints)
+        return stride(from: 0, to: pts.count, by: step).map { pts[$0] }
     }
 }

@@ -5,10 +5,10 @@ struct ProfileSettingsView: View {
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
 
-    enum Field: Hashable {
-        case name, weight, targetWeight, height
+    enum ActiveWheelPicker: Hashable {
+        case age, weight, height, targetWeight, restingHR, maxHR, lthr
     }
-    @FocusState private var focusedField: Field?
+    @State private var expandedWheel: ActiveWheelPicker?
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -22,6 +22,8 @@ struct ProfileSettingsView: View {
         let z3Upper = max(z3Lower, zones.z4Max - 5)
         let z4Lower = zones.z3Max + 5
         let z4Upper = max(z4Lower, profile.effectiveMaxHR - 5)
+
+        let weightSteps: [Double] = stride(from: 40.0, through: 180.0, by: 0.5).map { $0 }
 
         NavigationStack {
             Form {
@@ -48,13 +50,12 @@ struct ProfileSettingsView: View {
                     }
                 }
 
-                Section("Biometrics & Physiology (Clamped Safe Bounds)") {
+                Section("Biometrics & Physiology (Tap Row to Scroll)") {
                     HStack {
                         Text("Name")
                         Spacer()
-                        TextField("Name", text: binding(for: \.name))
+                        TextField("Fighter Name", text: binding(for: \.name))
                             .multilineTextAlignment(.trailing)
-                            .focused($focusedField, equals: .name)
                     }
 
                     Picker("Sex", selection: binding(for: \.sex)) {
@@ -63,35 +64,76 @@ struct ProfileSettingsView: View {
                         }
                     }
 
-                    Stepper("Age: \(profile.age) yrs", value: binding(for: \.age), in: 13...85)
-
-                    HStack {
-                        Text("Current Weight (35–200 kg)")
-                        Spacer()
-                        TextField("kg", value: binding(for: \.weightKg), format: .number)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                            .focused($focusedField, equals: .weight)
+                    // Age Wheel Row
+                    wheelValueRow(title: "Age", valueText: "\(profile.age) yrs", wheel: .age)
+                    if expandedWheel == .age {
+                        Picker("Age", selection: binding(for: \.age)) {
+                            ForEach(13...85, id: \.self) { yrs in
+                                Text("\(yrs) yrs").tag(yrs)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 130)
                     }
 
-                    HStack {
-                        Text("Height (120–240 cm)")
-                        Spacer()
-                        TextField("cm", value: binding(for: \.heightCm), format: .number)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                            .focused($focusedField, equals: .height)
+                    // Height Wheel Row
+                    wheelValueRow(title: "Height", valueText: "\(Int(round(profile.heightCm))) cm", wheel: .height)
+                    if expandedWheel == .height {
+                        Picker("Height", selection: Binding(
+                            get: { Int(round(profile.heightCm)) },
+                            set: { newVal in
+                                var updated = workoutStore.activeProfile
+                                updated.heightCm = Double(newVal)
+                                updated.sanitize()
+                                workoutStore.activeProfile = updated
+                            }
+                        )) {
+                            ForEach(120...230, id: \.self) { cm in
+                                Text("\(cm) cm").tag(cm)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 130)
                     }
 
-                    Stepper("Resting HR: \(profile.restingHR) BPM", value: binding(for: \.restingHR), in: 30...110)
+                    // Current Weight Wheel Row
+                    wheelValueRow(title: "Current Weight", valueText: String(format: "%.1f kg", profile.weightKg), wheel: .weight)
+                    if expandedWheel == .weight {
+                        Picker("Current Weight", selection: binding(for: \.weightKg)) {
+                            ForEach(weightSteps, id: \.self) { kg in
+                                Text(String(format: "%.1f kg", kg)).tag(kg)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 130)
+                    }
+
+                    // Resting HR Wheel Row
+                    wheelValueRow(title: "Resting HR", valueText: "\(profile.restingHR) BPM", wheel: .restingHR)
+                    if expandedWheel == .restingHR {
+                        Picker("Resting HR", selection: binding(for: \.restingHR)) {
+                            ForEach(30...110, id: \.self) { bpm in
+                                Text("\(bpm) BPM").tag(bpm)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 130)
+                    }
 
                     Toggle("Auto Max HR (Tanaka: \(Int(round(208.0 - 0.7 * Double(profile.age)))))", isOn: binding(for: \.useAutoMaxHR))
 
                     if !profile.useAutoMaxHR {
                         let minMaxHR = profile.restingHR + 35
-                        Stepper("Custom Max HR: \(profile.maxHR) BPM", value: binding(for: \.maxHR), in: minMaxHR...max(minMaxHR, 230))
+                        wheelValueRow(title: "Custom Max HR", valueText: "\(profile.maxHR) BPM", wheel: .maxHR)
+                        if expandedWheel == .maxHR {
+                            Picker("Custom Max HR", selection: binding(for: \.maxHR)) {
+                                ForEach(minMaxHR...230, id: \.self) { bpm in
+                                    Text("\(bpm) BPM").tag(bpm)
+                                }
+                            }
+                            .pickerStyle(.wheel)
+                            .frame(height: 130)
+                        }
                     }
                 }
 
@@ -102,14 +144,15 @@ struct ProfileSettingsView: View {
                         }
                     }
 
-                    HStack {
-                        Text("Target Fight Weight (kg)")
-                        Spacer()
-                        TextField("Target kg", value: binding(for: \.targetFightWeightKg), format: .number)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                            .focused($focusedField, equals: .targetWeight)
+                    wheelValueRow(title: "Target Fight Weight", valueText: String(format: "%.1f kg", profile.targetFightWeightKg), wheel: .targetWeight)
+                    if expandedWheel == .targetWeight {
+                        Picker("Target Fight Weight", selection: binding(for: \.targetFightWeightKg)) {
+                            ForEach(weightSteps, id: \.self) { kg in
+                                Text(String(format: "%.1f kg", kg)).tag(kg)
+                            }
+                        }
+                        .pickerStyle(.wheel)
+                        .frame(height: 130)
                     }
 
                     HStack {
@@ -146,7 +189,16 @@ struct ProfileSettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if profile.zoneMethod == .lactateThreshold {
-                        Stepper("Lactate Threshold (LTHR): \(profile.lactateThresholdHR) BPM", value: binding(for: \.lactateThresholdHR), in: minLTHR...maxLTHR)
+                        wheelValueRow(title: "Lactate Threshold (LTHR)", valueText: "\(profile.lactateThresholdHR) BPM", wheel: .lthr)
+                        if expandedWheel == .lthr {
+                            Picker("LTHR", selection: binding(for: \.lactateThresholdHR)) {
+                                ForEach(minLTHR...maxLTHR, id: \.self) { bpm in
+                                    Text("\(bpm) BPM").tag(bpm)
+                                }
+                            }
+                            .pickerStyle(.wheel)
+                            .frame(height: 130)
+                        }
                     }
 
                     if profile.zoneMethod == .manual {
@@ -166,13 +218,34 @@ struct ProfileSettingsView: View {
                     .padding(.vertical, 4)
                 }
 
+                Section("AirPods Live Audio HR Coaching (Music-Safe)") {
+                    Toggle("Enable Voice HR Coaching", isOn: binding(for: \.audioCoach.masterEnabled))
+
+                    if profile.audioCoach.masterEnabled {
+                        Toggle("Zone Crossing Alerts (Z2 → Z3 → Z4 → Z5)", isOn: binding(for: \.audioCoach.announceZoneCrossings))
+                        Toggle("Roadwork Zone 2 Ceiling Guard", isOn: binding(for: \.audioCoach.zone2CeilingAlert))
+                        Toggle("Round Warnings (1m / 30s / 10s + BPM)", isOn: binding(for: \.audioCoach.announceRoundWarnings))
+                        Toggle("Stool Rest Recovery Readout (HRR-60)", isOn: binding(for: \.audioCoach.announceStoolRecovery))
+                        Toggle("Sustained Redline Warning (>92% MaxHR)", isOn: binding(for: \.audioCoach.announceRedlineWarning))
+                        Toggle("Ghost Opponent Lead / Delta Alerts", isOn: binding(for: \.audioCoach.announceGhostDelta))
+
+                        Picker("Periodic BPM & Zone Check-In", selection: binding(for: \.audioCoach.periodicMinutes)) {
+                            Text("Off").tag(0)
+                            Text("Every 1 min").tag(1)
+                            Text("Every 2 min").tag(2)
+                            Text("Every 3 min").tag(3)
+                            Text("Every 5 min").tag(5)
+                        }
+                    }
+                }
+
                 Section("iPhone Files App & Lossless Archive (.cspk)") {
                     HStack {
-                        Text("Files App Folder")
+                        Text("Fighter Profiles File")
                         Spacer()
-                        Text("On My iPhone / Coospo Workout")
+                        Text("Profiles/fighter_profiles.json")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.green)
                     }
                     HStack {
                         Text("Compressed (>7 Days Old)")
@@ -193,20 +266,34 @@ struct ProfileSettingsView: View {
                     }
                 }
             }
-            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Fighter & Zones")
-            .toolbar {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { focusedField = nil }
-                }
-            }
             .alert("New Fighter Profile", isPresented: $showingNewProfileAlert) {
                 TextField("Fighter Name", text: $newFighterName)
                 Button("Create") {
                     workoutStore.addProfile(name: newFighterName)
                 }
                 Button("Cancel", role: .cancel) {}
+            }
+        }
+    }
+
+    private func wheelValueRow(title: String, valueText: String, wheel: ActiveWheelPicker) -> some View {
+        Button {
+            withAnimation(.snappy) {
+                expandedWheel = (expandedWheel == wheel) ? nil : wheel
+            }
+        } label: {
+            HStack {
+                Text(title)
+                    .foregroundStyle(.primary)
+                Spacer()
+                Text(valueText)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(expandedWheel == wheel ? .orange : .cyan)
+                Image(systemName: expandedWheel == wheel ? "chevron.up" : "chevron.down")
+                    .font(.caption2.bold())
+                    .foregroundStyle(.secondary)
             }
         }
     }
