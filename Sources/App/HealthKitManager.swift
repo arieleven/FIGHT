@@ -23,6 +23,69 @@ final class HealthKitManager: ObservableObject {
 
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
+    private var readTypes: Set<HKObjectType> {
+        [HKQuantityType(.restingHeartRate), HKQuantityType(.bodyMass)]
+    }
+
+    // MARK: Reading from Health
+
+    private func quantitySamples(_ type: HKQuantityType, unit: HKUnit, since: Date) async -> [(date: Date, value: Double)] {
+        guard isAvailable else { return [] }
+        do {
+            try await store.requestAuthorization(toShare: [], read: readTypes)
+            let descriptor = HKSampleQueryDescriptor(
+                predicates: [.quantitySample(type: type, predicate: HKQuery.predicateForSamples(withStart: since, end: nil))],
+                sortDescriptors: [SortDescriptor(\.startDate, order: .reverse)],
+                limit: 300
+            )
+            let results = try await descriptor.result(for: store)
+            return results.map { ($0.startDate, $0.quantity.doubleValue(for: unit)) }
+        } catch {
+            statusMessage = "Couldn't read Apple Health: \(error.localizedDescription)"
+            return []
+        }
+    }
+
+    /// Imports body-weight entries (e.g. from a smart scale) as weigh-ins, skipping duplicates.
+    @discardableResult
+    func importWeighIns(into workoutStore: WorkoutStore, profileID: UUID, days: Int = 60) async -> Int {
+        let samples = await quantitySamples(HKQuantityType(.bodyMass), unit: .gramUnit(with: .kilo),
+                                            since: Date().addingTimeInterval(-Double(days) * 86400))
+        var added = 0
+        for s in samples {
+            let duplicate = workoutStore.weighIns.contains {
+                $0.profileID == profileID && abs($0.date.timeIntervalSince(s.date)) < 4 * 3600
+            }
+            guard !duplicate, s.value >= 30, s.value <= 250 else { continue }
+            workoutStore.addWeighIn(WeighIn(profileID: profileID, date: s.date, weightKg: s.value, notes: "Apple Health"))
+            added += 1
+        }
+        statusMessage = added == 0 ? "No new weigh-ins in Apple Health" : "Imported \(added) weigh-in\(added == 1 ? "" : "s") from Apple Health"
+        return added
+    }
+
+    /// Imports daily resting HR (e.g. from Apple Watch) for days without a readiness check.
+    @discardableResult
+    func importRestingHR(into workoutStore: WorkoutStore, days: Int = 30) async -> Int {
+        let samples = await quantitySamples(HKQuantityType(.restingHeartRate), unit: .count().unitDivided(by: .minute()),
+                                            since: Date().addingTimeInterval(-Double(days) * 86400))
+        let cal = Calendar.current
+        var seenDays = Set(workoutStore.readinessReadings.map { cal.startOfDay(for: $0.date) })
+        var added = 0
+        for s in samples {
+            let day = cal.startOfDay(for: s.date)
+            guard !seenDays.contains(day), s.value >= 30, s.value <= 120 else { continue }
+            seenDays.insert(day)
+            workoutStore.addReadiness(ReadinessReading(
+                date: s.date, durationSeconds: 0, restingHR: Int(s.value.rounded()), rmssd: nil, artifactRate: nil,
+                sleepQuality: 3, soreness: 2, source: "health"
+            ))
+            added += 1
+        }
+        statusMessage = added == 0 ? "No new resting HR in Apple Health" : "Imported \(added) day\(added == 1 ? "" : "s") of resting HR"
+        return added
+    }
+
     init() {
         autoSaveEnabled = UserDefaults.standard.object(forKey: autoSaveKey) as? Bool ?? true
         if let stored = UserDefaults.standard.array(forKey: savedIDsKey) as? [String] {
@@ -50,7 +113,7 @@ final class HealthKitManager: ObservableObject {
         }
         let shareTypes: Set<HKSampleType> = [HKObjectType.workoutType(), heartRateType, activeEnergyType]
         do {
-            try await store.requestAuthorization(toShare: shareTypes, read: [])
+            try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
             UserDefaults.standard.set(true, forKey: authorizedKey)
             refreshAuthorizationState()
             statusMessage = isAuthorized

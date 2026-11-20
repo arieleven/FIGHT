@@ -210,7 +210,7 @@ enum CoachEngine {
     private static func isHardSession(_ w: SavedWorkout, profile: AthleteProfile) -> Bool {
         let total = max(1, w.zoneSeconds.values.reduce(0, +))
         let high = w.zoneSeconds[4, default: 0] + w.zoneSeconds[5, default: 0]
-        return high / total >= 0.20 || w.trimpScore >= 90
+        return high / total >= 0.20 || w.effectiveLoad >= 90
     }
 
     /// Rising average HR across rounds (%) — lower means better fight stamina.
@@ -240,7 +240,7 @@ enum CoachEngine {
         let warmup = 84
         var daily: [Date: Double] = [:]
         for w in workouts {
-            daily[cal.startOfDay(for: w.startDate), default: 0] += w.trimpScore
+            daily[cal.startOfDay(for: w.startDate), default: 0] += w.effectiveLoad
         }
         var ctl = 0.0, atl = 0.0
         var points: [TrainingLoadPoint] = []
@@ -577,7 +577,7 @@ enum CoachEngine {
             let base = baseline.map { Double($0.restingHR) }
             if base.count >= 3, let m = mean(base) { rhrDelta = Double(t.restingHR) - m }
         }
-        let subjective = today.map { Double($0.sleepQuality + (6 - $0.soreness)) }
+        let subjective = today.flatMap { $0.hasSelfRatings ? Double($0.sleepQuality + (6 - $0.soreness)) : nil }
         let lastHard = workouts.first { isHardSession($0, profile: profile) }
         let hoursSinceHard = lastHard.map { now.timeIntervalSince($0.endDate) / 3600 }
 
@@ -593,7 +593,7 @@ enum CoachEngine {
         if let f = form { evidence.append(String(format: "Form %+.0f (negative = carrying fatigue)", f)) }
         if let z = hrvZ { evidence.append(String(format: "HRV today %+.1f SD vs your baseline", z)) }
         if let d = rhrDelta { evidence.append(String(format: "Resting HR %+.0f BPM vs baseline", d)) }
-        if let t = today { evidence.append("Sleep \(t.sleepQuality)/5 • Soreness \(t.soreness)/5") }
+        if let t = today, t.hasSelfRatings { evidence.append("Sleep \(t.sleepQuality)/5 • Soreness \(t.soreness)/5") }
         if let h = hoursSinceHard { evidence.append(String(format: "%.0f h since last hard session", h)) }
         if today == nil { evidence.append("Do a 2-min readiness check for HRV-based readiness") }
 
@@ -739,6 +739,12 @@ enum CoachEngine {
                               detail: "Your zones are only as good as your last test. A 30-min LTHR field test every 6 weeks keeps every metric accurate."))
         }
 
+        let recentMax = workouts.filter { $0.startDate >= now.addingTimeInterval(-90 * 86400) }.map(\.maxBPM).filter { $0 < 240 }.max()
+        if let observed = recentMax, observed > profile.effectiveMaxHR + 1 {
+            recs.append(.init(kind: .test, title: "New max HR seen: \(observed) BPM",
+                              detail: "You reached \(observed) BPM, above your profile max of \(profile.effectiveMaxHR). Unless it was a sensor glitch, set Max HR to \(observed) in the Fighter tab so your zones and ratings stay accurate."))
+        }
+
         if let m = measuredRHR, abs(m - profile.restingHR) >= 4 {
             recs.append(.init(kind: .test, title: "Update resting HR to \(m) BPM",
                               detail: "Your morning checks average \(m) BPM, but your profile says \(profile.restingHR). Update it in the Fighter tab for more accurate zones and calories."))
@@ -825,15 +831,25 @@ enum CoachEngine {
                                note: "Peaked at \(Int(pct * 100))% of max HR"))
         }
 
-        // 6. Session load vs normal
+        // 6. Coach plan adherence
+        if let adherence = w.planAdherence, let lo = w.planTargetLow, let hi = w.planTargetHigh {
+            items.append(.init(title: "Plan Adherence", icon: "list.clipboard.fill",
+                               score: Int(scale(adherence, worst: 0.3, best: 0.8)),
+                               note: "\(Int(adherence * 100))% of the session in \(lo)–\(hi) BPM\(w.planTitle.map { " (\($0))" } ?? "")"))
+            if adherence < 0.5 {
+                takeaways.append("Under half the session was in the plan's target band. Use the on-screen target and audio alerts to stay in range.")
+            }
+        }
+
+        // 7. Session load vs normal
         let others = history.filter { $0.id != w.id && $0.profileID == w.profileID && $0.startDate >= w.startDate.addingTimeInterval(-28 * 86400) && $0.startDate < w.startDate }
         var loadText: String?
         if others.count >= 3 {
-            let sorted = others.map(\.trimpScore).sorted()
+            let sorted = others.map(\.effectiveLoad).sorted()
             let median = sorted[sorted.count / 2]
             if median > 0 {
-                let ratio = w.trimpScore / median
-                loadText = String(format: "Load %.0f — %.0f%% of your typical session", w.trimpScore, ratio * 100)
+                let ratio = w.effectiveLoad / median
+                loadText = String(format: "Load %.0f — %.0f%% of your typical session", w.effectiveLoad, ratio * 100)
                 if ratio > 1.6 { takeaways.append("This was a big session. Plan an easy day next.") }
             }
         }

@@ -1,6 +1,18 @@
 import Foundation
 import SwiftUI
 
+// MARK: - Units
+
+/// Weights are stored in kg; these convert for display/entry when the athlete prefers pounds.
+enum WeightUnits {
+    static let lbPerKg = 2.20462
+    static func value(_ kg: Double, _ imperial: Bool) -> Double { imperial ? kg * lbPerKg : kg }
+    static func toKg(_ v: Double, _ imperial: Bool) -> Double { imperial ? v / lbPerKg : v }
+    static func unit(_ imperial: Bool) -> String { imperial ? "lb" : "kg" }
+    static func number(_ kg: Double, _ imperial: Bool) -> String { String(format: "%.1f", value(kg, imperial)) }
+    static func text(_ kg: Double, _ imperial: Bool) -> String { "\(number(kg, imperial)) \(unit(imperial))" }
+}
+
 // MARK: - Weigh-ins
 
 struct WeighIn: Codable, Identifiable, Equatable {
@@ -141,6 +153,8 @@ enum CampPlanner {
         let target = profile.targetFightWeightKg
         let toGo = current - target
         let toGoPct = current > 0 ? toGo / current * 100 : 0
+        let imp = profile.useImperial
+        let perWeek = "\(WeightUnits.unit(imp))/week"
 
         let daysToFight: Int? = profile.fightDate.map {
             Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: now),
@@ -233,7 +247,7 @@ enum CampPlanner {
 
         // Rate of loss
         if let t = trend, -t / current * 100 > 1.5, !fightWeek {
-            warnings.append(.init(severity: .caution, title: "Losing \(fmt(-t)) kg/week",
+            warnings.append(.init(severity: .caution, title: "Losing \(WeightUnits.number(-t, imp)) \(perWeek)",
                                   detail: "Losing more than 1–1.5% of body weight per week costs muscle and power. Slow the diet down a little."))
         }
 
@@ -243,10 +257,10 @@ enum CampPlanner {
                 warnings.append(.init(severity: .danger, title: "\(fmt(toGoPct))% still to cut in fight week",
                                       detail: "Water cuts above about 5% seriously impair performance and are dangerous. Talk to your coach about moving up a weight class or a safer plan."))
             } else if d > 7 && reqPct > 1.5 {
-                warnings.append(.init(severity: .danger, title: "Target needs \(fmt(required ?? 0)) kg/week",
+                warnings.append(.init(severity: .danger, title: "Target needs \(WeightUnits.number(required ?? 0, imp)) \(perWeek)",
                                       detail: "That's over 1.5% of body weight per week. The target is likely unrealistic without a harmful water cut."))
             } else if d > 7 && reqPct > 1.0 {
-                warnings.append(.init(severity: .caution, title: "Aggressive pace: \(fmt(required ?? 0)) kg/week",
+                warnings.append(.init(severity: .caution, title: "Aggressive pace: \(WeightUnits.number(required ?? 0, imp)) \(perWeek)",
                                       detail: "Doable, but leave no slack. Keep protein high (2 g/kg) to protect muscle."))
             }
         }
@@ -326,7 +340,7 @@ enum CampPlanner {
                 index: i, start: start, end: end, phase: phase, isDeload: deload, isFightWeek: isFightWeek,
                 targetLoad: target.rounded(), targetSessions: content.sessions, intensityMix: content.mix,
                 focus: content.focus, keySessions: content.keys,
-                actualLoad: inWeek.reduce(0) { $0 + $1.trimpScore }, actualSessions: inWeek.count
+                actualLoad: inWeek.reduce(0) { $0 + $1.effectiveLoad }, actualSessions: inWeek.count
             ))
         }
 

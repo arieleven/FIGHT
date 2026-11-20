@@ -15,7 +15,7 @@ struct WeeklyReportData {
     let weighIns: [WeighIn]
 
     var totalDuration: TimeInterval { sessions.reduce(0) { $0 + $1.duration } }
-    var totalLoad: Double { sessions.reduce(0) { $0 + $1.trimpScore } }
+    var totalLoad: Double { sessions.reduce(0) { $0 + $1.effectiveLoad } }
     var totalCalories: Double { sessions.reduce(0) { $0 + $1.activeCalories } }
     var totalRounds: Int { sessions.reduce(0) { $0 + $1.roundStats.count } }
 
@@ -342,7 +342,7 @@ private struct ReportPageTwo: View {
                                 cell("\(s.category.rawValue) • \(s.drillTag.rawValue)", 120)
                                 cell(durationText(s.duration), 36)
                                 cell("\(s.averageBPM)/\(s.maxBPM)", 50)
-                                cell("\(Int(s.trimpScore))", 30)
+                                cell("\(Int(s.effectiveLoad))", 30)
                                 Text(r?.overall.map(String.init) ?? "–")
                                     .font(.system(size: 9, weight: .bold))
                                     .foregroundStyle(scoreColor(r?.overall))
@@ -364,23 +364,24 @@ private struct ReportPageTwo: View {
             HStack(alignment: .top, spacing: 10) {
                 ReportSection(title: "Weight cut") {
                     let w = data.weight
-                    Text("\(CampPlanner.fmt(w.currentKg)) kg → \(CampPlanner.fmt(w.targetKg)) kg target")
+                    let imp = data.profile.useImperial
+                    Text("\(WeightUnits.text(w.currentKg, imp)) → \(WeightUnits.text(w.targetKg, imp)) target")
                         .font(.system(size: 11, weight: .bold))
-                    Text(w.toGoKg > 0 ? "\(CampPlanner.fmt(w.toGoKg)) kg (\(CampPlanner.fmt(w.toGoPercent))%) to go" : "On weight")
+                    Text(w.toGoKg > 0 ? "\(WeightUnits.text(w.toGoKg, imp)) (\(CampPlanner.fmt(w.toGoPercent))%) to go" : "On weight")
                         .font(.system(size: 9))
                     if let t = w.trendKgPerWeek {
-                        Text(String(format: "Trend %+.1f kg/week", t)).font(.system(size: 9))
+                        Text(String(format: "Trend %+.1f %@/week", WeightUnits.value(t, imp), WeightUnits.unit(imp))).font(.system(size: 9))
                     }
                     if let r = w.requiredKgPerWeek, w.toGoKg > 0 {
-                        Text("Needed \(CampPlanner.fmt(r)) kg/week").font(.system(size: 9))
+                        Text("Needed \(WeightUnits.number(r, imp)) \(WeightUnits.unit(imp))/week").font(.system(size: 9))
                     }
                     if data.weighIns.count >= 2 {
                         Chart {
                             ForEach(data.weighIns) { e in
-                                LineMark(x: .value("D", e.date), y: .value("kg", e.weightKg))
+                                LineMark(x: .value("D", e.date), y: .value("kg", WeightUnits.value(e.weightKg, imp)))
                                     .foregroundStyle(Color.cyan)
                             }
-                            RuleMark(y: .value("T", w.targetKg))
+                            RuleMark(y: .value("T", WeightUnits.value(w.targetKg, imp)))
                                 .foregroundStyle(Color.green)
                                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 3]))
                         }

@@ -52,6 +52,7 @@ struct ProfileSettingsView: View {
                 }
 
                 Section("Biometrics & Physiology (Tap Row to Scroll)") {
+                    Toggle("Use pounds (lb)", isOn: binding(for: \.useImperial))
                     HStack {
                         Text("Name")
                         Spacer()
@@ -95,11 +96,11 @@ struct ProfileSettingsView: View {
                         .frame(height: 130)
                     }
 
-                    wheelValueRow(title: "Current Weight", valueText: String(format: "%.1f kg", profile.weightKg), wheel: .weight)
+                    wheelValueRow(title: "Current Weight", valueText: WeightUnits.text(profile.weightKg, profile.useImperial), wheel: .weight)
                     if expandedWheel == .weight {
                         Picker("Current Weight", selection: binding(for: \.weightKg)) {
                             ForEach(weightSteps, id: \.self) { kg in
-                                Text(String(format: "%.1f kg", kg)).tag(kg)
+                                Text(WeightUnits.text(kg, profile.useImperial)).tag(kg)
                             }
                         }
                         .pickerStyle(.wheel)
@@ -141,11 +142,11 @@ struct ProfileSettingsView: View {
                         }
                     }
 
-                    wheelValueRow(title: "Target Fight Weight", valueText: String(format: "%.1f kg", profile.targetFightWeightKg), wheel: .targetWeight)
+                    wheelValueRow(title: "Target Fight Weight", valueText: WeightUnits.text(profile.targetFightWeightKg, profile.useImperial), wheel: .targetWeight)
                     if expandedWheel == .targetWeight {
                         Picker("Target Fight Weight", selection: binding(for: \.targetFightWeightKg)) {
                             ForEach(weightSteps, id: \.self) { kg in
-                                Text(String(format: "%.1f kg", kg)).tag(kg)
+                                Text(WeightUnits.text(kg, profile.useImperial)).tag(kg)
                             }
                         }
                         .pickerStyle(.wheel)
@@ -156,7 +157,7 @@ struct ProfileSettingsView: View {
                         Text("Weight to Cut / Gain")
                         Spacer()
                         let delta = profile.weightDeltaKg
-                        Text(delta > 0 ? String(format: "-%.1f kg to cut", delta) : String(format: "+%.1f kg buffer", abs(delta)))
+                        Text(delta > 0 ? "-\(WeightUnits.text(delta, profile.useImperial)) to cut" : "+\(WeightUnits.text(abs(delta), profile.useImperial)) buffer")
                             .fontWeight(.semibold)
                             .foregroundStyle(delta > 0 ? .orange : .green)
                     }
@@ -225,6 +226,17 @@ struct ProfileSettingsView: View {
                         Toggle("Stool Rest Recovery Readout (HRR-60)", isOn: binding(for: \.audioCoach.announceStoolRecovery))
                         Toggle("Sustained Redline Warning (>92% MaxHR)", isOn: binding(for: \.audioCoach.announceRedlineWarning))
                         Toggle("Ghost Opponent Lead / Delta Alerts", isOn: binding(for: \.audioCoach.announceGhostDelta))
+
+                        Toggle("10-Second Clapper Warnings", isOn: binding(for: \.audioCoach.clapperWarnings))
+                        Toggle("Lower Music While Coaching", isOn: binding(for: \.audioCoach.duckMusic))
+                        VStack(alignment: .leading) {
+                            Text("Voice volume").font(.subheadline)
+                            Slider(value: binding(for: \.audioCoach.voiceVolume), in: 0.2...1.0)
+                        }
+                        VStack(alignment: .leading) {
+                            Text("Bell & clapper volume").font(.subheadline)
+                            Slider(value: binding(for: \.audioCoach.bellVolume), in: 0.2...1.0)
+                        }
 
                         Picker("Periodic BPM & Zone Check-In", selection: binding(for: \.audioCoach.periodicMinutes)) {
                             Text("Off").tag(0)

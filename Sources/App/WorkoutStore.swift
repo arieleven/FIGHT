@@ -165,6 +165,35 @@ final class WorkoutStore: ObservableObject {
         refreshGhostCache()
     }
 
+    /// Stores the athlete's post-session effort rating (enables session-RPE load).
+    func updateRating(workoutID: UUID, rpe: Int, notes: String) {
+        guard let idx = workouts.firstIndex(where: { $0.id == workoutID }) else { return }
+        var w = workouts[idx]
+        w.rpe = min(max(rpe, 1), 10)
+        w.notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        w.rpeRated = true
+        workouts[idx] = w
+        writeWorkoutMetadata(w)
+    }
+
+    /// Zips the whole Documents folder (workouts, profiles, checks, weigh-ins, exports)
+    /// into a single backup file for the share sheet.
+    func exportAllDataArchive() -> URL? {
+        let coordinator = NSFileCoordinator()
+        var coordError: NSError?
+        var result: URL?
+        let stamp = DateFormatter()
+        stamp.dateFormat = "yyyy-MM-dd"
+        let dest = FileManager.default.temporaryDirectory.appendingPathComponent("FIGHT-Backup-\(stamp.string(from: Date())).zip")
+        coordinator.coordinate(readingItemAt: documentsDirectory, options: [.forUploading], error: &coordError) { zipURL in
+            try? FileManager.default.removeItem(at: dest)
+            if (try? FileManager.default.copyItem(at: zipURL, to: dest)) != nil {
+                result = dest
+            }
+        }
+        return result
+    }
+
     func delete(_ workout: SavedWorkout) {
         let metaURL = workoutsDirectory.appendingPathComponent("\(workout.id.uuidString).json")
         try? FileManager.default.removeItem(at: metaURL)
@@ -272,8 +301,8 @@ final class WorkoutStore: ObservableObject {
         let sevenDaysAgo = now.addingTimeInterval(-7 * 86400)
         let twentyEightDaysAgo = now.addingTimeInterval(-28 * 86400)
 
-        let acuteLoad = workouts.filter { $0.startDate >= sevenDaysAgo }.reduce(0.0) { $0 + $1.trimpScore }
-        let chronicTotal = workouts.filter { $0.startDate >= twentyEightDaysAgo }.reduce(0.0) { $0 + $1.trimpScore }
+        let acuteLoad = workouts.filter { $0.startDate >= sevenDaysAgo }.reduce(0.0) { $0 + $1.effectiveLoad }
+        let chronicTotal = workouts.filter { $0.startDate >= twentyEightDaysAgo }.reduce(0.0) { $0 + $1.effectiveLoad }
         let chronicWeeklyAvg = chronicTotal / 4.0
 
         guard chronicWeeklyAvg >= 20 else {

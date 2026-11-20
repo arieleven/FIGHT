@@ -6,6 +6,7 @@ struct WorkoutDetailView: View {
     @EnvironmentObject var healthKit: HealthKitManager
     let workout: SavedWorkout
     @State private var isSavingToHealth = false
+    @State private var exportURL: URL?
 
     @State private var selectedElapsed: Double?
     @State private var loadedSamples: [HeartRatePoint] = []
@@ -39,8 +40,9 @@ struct WorkoutDetailView: View {
         ScrollView {
             VStack(spacing: 20) {
                 headerSummaryCard
+                SessionRatingCard(workoutID: workout.id)
                 CoachReviewCard(review: CoachEngine.review(
-                    workout: workout,
+                    workout: workoutStore.workouts.first(where: { $0.id == workout.id }) ?? workout,
                     profile: workoutStore.profile(for: workout),
                     history: workoutStore.workouts
                 ))
@@ -90,10 +92,19 @@ struct WorkoutDetailView: View {
                     Image(systemName: "square.stack.3d.up")
                 }
 
-                ShareLink(item: workoutStore.exportTCXFile(for: workout)) {
+                Button {
+                    exportURL = workoutStore.exportTCXFile(for: workout)
+                } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
+                .accessibilityLabel("Export TCX")
             }
+        }
+        .sheet(item: Binding(
+            get: { exportURL.map(ShareableFile.init) },
+            set: { if $0 == nil { exportURL = nil } }
+        )) { file in
+            ShareSheet(items: [file.url])
         }
         .sheet(isPresented: $showingComparison) {
             ComparisonView(initialBaselineWorkout: workout)
@@ -114,7 +125,7 @@ struct WorkoutDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Text("\(workout.drillTag.rawValue) • RPE \(workout.rpe)/10")
+                        Text(workout.drillTag.rawValue)
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.orange)
                         if workout.isCompressedArchive {
@@ -615,5 +626,106 @@ struct WorkoutDetailView: View {
         let m = total / 60
         let s = total % 60
         return String(format: "%02d:%02d", m, s)
+    }
+}
+
+// MARK: - Post-session rating
+
+/// Asks "how hard was that?" after the session (RPE 1–10). Once rated, the
+/// session's load blends heart-rate TRIMP with session-RPE.
+struct SessionRatingCard: View {
+    @EnvironmentObject var workoutStore: WorkoutStore
+    let workoutID: UUID
+
+    @State private var rpe: Int = 6
+    @State private var notes: String = ""
+    @State private var editing = false
+    @State private var loaded = false
+
+    private static let labels = [
+        1: "Very easy", 2: "Easy", 3: "Moderate", 4: "Somewhat hard", 5: "Hard",
+        6: "Hard+", 7: "Very hard", 8: "Very hard+", 9: "Near max", 10: "Max effort"
+    ]
+
+    var body: some View {
+        let workout = workoutStore.workouts.first { $0.id == workoutID }
+        VStack(alignment: .leading, spacing: 10) {
+            if let w = workout, w.rpeRated, !editing {
+                HStack {
+                    Label("Effort \(w.rpe)/10 • \(Self.labels[w.rpe] ?? "")", systemImage: "flame.fill")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Edit") {
+                        rpe = w.rpe
+                        notes = w.notes
+                        editing = true
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+                if !w.notes.isEmpty {
+                    Text(w.notes).font(.caption).foregroundStyle(.secondary)
+                }
+                Text(String(format: "Session load %.0f (heart rate %.0f, effort %.0f)", w.effectiveLoad, w.trimpScore, w.sessionRPELoad))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("How hard was that?")
+                    .font(.headline)
+                Text("Your rating makes training load more accurate. Heart rate alone under-reads sparring, clinch and strength work.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    ForEach(1...10, id: \.self) { v in
+                        Button {
+                            rpe = v
+                        } label: {
+                            Text("\(v)")
+                                .font(.subheadline.weight(.bold))
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .background(color(v).opacity(rpe == v ? 1 : 0.2), in: RoundedRectangle(cornerRadius: 8))
+                                .foregroundStyle(rpe == v ? Color.black : color(v))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Effort \(v), \(Self.labels[v] ?? "")")
+                        .accessibilityAddTraits(rpe == v ? .isSelected : [])
+                    }
+                }
+                Text(Self.labels[rpe] ?? "")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(color(rpe))
+                TextField("Notes (optional): how it felt, what worked", text: $notes, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(1...3)
+                Button {
+                    workoutStore.updateRating(workoutID: workoutID, rpe: rpe, notes: notes)
+                    editing = false
+                } label: {
+                    Text("Save Rating")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .onAppear {
+            guard !loaded, let w = workout else { return }
+            loaded = true
+            notes = w.notes
+            if w.rpeRated { rpe = w.rpe }
+        }
+    }
+
+    private func color(_ v: Int) -> Color {
+        switch v {
+        case 1...3: return .green
+        case 4...6: return .yellow
+        case 7...8: return .orange
+        default: return .red
+        }
     }
 }

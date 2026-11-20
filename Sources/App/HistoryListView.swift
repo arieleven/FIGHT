@@ -5,6 +5,8 @@ struct HistoryListView: View {
     @State private var selectedFilter: WorkoutCategory?
     @State private var filterByCurrentFighter = false
     @State private var showingComparison = false
+    @State private var backupURL: URL?
+    @State private var backupFailed = false
 
     private var filteredWorkouts: [SavedWorkout] {
         workoutStore.workouts.filter { w in
@@ -36,7 +38,7 @@ struct HistoryListView: View {
                                 .foregroundStyle(.secondary)
                             let weekTRIMP = workoutStore.workouts
                                 .filter { $0.startDate >= Date().addingTimeInterval(-7 * 86400) }
-                                .reduce(0.0) { $0 + $1.trimpScore }
+                                .reduce(0.0) { $0 + $1.effectiveLoad }
                             Text("\(Int(weekTRIMP))")
                                 .font(.headline.monospacedDigit())
                                 .foregroundStyle(.cyan)
@@ -92,13 +94,37 @@ struct HistoryListView: View {
             .navigationTitle("Training Log")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingComparison = true
+                    Menu {
+                        Button {
+                            showingComparison = true
+                        } label: {
+                            Label("Compare Sessions", systemImage: "square.stack.3d.up")
+                        }
+                        .disabled(workoutStore.workouts.count < 2)
+                        Button {
+                            if let url = workoutStore.exportAllDataArchive() {
+                                backupURL = url
+                            } else {
+                                backupFailed = true
+                            }
+                        } label: {
+                            Label("Export All Data (Backup)", systemImage: "archivebox")
+                        }
                     } label: {
-                        Label("Compare", systemImage: "square.stack.3d.up")
+                        Label("More", systemImage: "ellipsis.circle")
                     }
-                    .disabled(workoutStore.workouts.count < 2)
                 }
+            }
+            .sheet(item: Binding(
+                get: { backupURL.map(ShareableFile.init) },
+                set: { if $0 == nil { backupURL = nil } }
+            )) { file in
+                ShareSheet(items: [file.url])
+            }
+            .alert("Backup failed", isPresented: $backupFailed) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("The backup archive couldn't be created. Try again.")
             }
             .sheet(isPresented: $showingComparison) {
                 ComparisonView(initialBaselineWorkout: workoutStore.workouts.first)

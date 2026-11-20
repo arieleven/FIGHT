@@ -4,6 +4,8 @@ import Charts
 struct CoachView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var navigation: AppNavigation
+    @EnvironmentObject var healthKit: HealthKitManager
+    @State private var importingHealth = false
 
     @State private var report: CoachReport?
     @State private var selectedMetric: MetricScore?
@@ -153,6 +155,24 @@ struct CoachView: View {
                 }
                 .buttonStyle(.bordered)
                 .tint(.pink)
+
+                if healthKit.isAvailable {
+                    Button {
+                        importingHealth = true
+                        Task {
+                            await healthKit.importRestingHR(into: workoutStore)
+                            importingHealth = false
+                            refresh()
+                        }
+                    } label: {
+                        HStack {
+                            if importingHealth { ProgressView().padding(.trailing, 4) }
+                            Text("Or import resting HR from Apple Health (e.g. Apple Watch)")
+                        }
+                        .font(.caption)
+                    }
+                    .disabled(importingHealth)
+                }
             }
         }
         .padding()

@@ -3,6 +3,11 @@ import Charts
 
 struct CampView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var healthKit: HealthKitManager
+    @AppStorage("fight_reminder_on") private var reminderOn = false
+    @AppStorage("fight_reminder_minutes") private var reminderMinutes = 7 * 60
+    @State private var reminderDenied = false
+    @State private var importingHealth = false
 
     @State private var showingFightSetup = false
     @State private var showingWeighIn = false
@@ -25,6 +30,10 @@ struct CampView: View {
                         currentWeekCard(week, plan: plan, profile: profile)
                     }
 
+                    if let days = weight.daysToFight, (0...3).contains(days) {
+                        rehydrationCard(weight, profile: profile)
+                    }
+
                     weightCard(weight, profile: profile)
 
                     bodySignalsCard
@@ -32,6 +41,8 @@ struct CampView: View {
                     if let plan {
                         planCard(plan)
                     }
+
+                    reminderCard
 
                     reportCard
                 }
@@ -99,7 +110,7 @@ struct CampView: View {
                         Text("Camp starts \(plan.campStart.formatted(date: .abbreviated, time: .omitted))")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    Text("Target: \(CampPlanner.fmt(profile.targetFightWeightKg)) kg • \(plan.weeks.count)-week camp")
+                    Text("Target: \(WeightUnits.text(profile.targetFightWeightKg, profile.useImperial)) • \(plan.weeks.count)-week camp")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
@@ -218,6 +229,8 @@ struct CampView: View {
 
     private func weightCard(_ w: WeightCutStatus, profile: AthleteProfile) -> some View {
         let recent = w.series.filter { $0.date >= Date().addingTimeInterval(-56 * 86400) }
+        let imp = profile.useImperial
+        let u = WeightUnits.unit(imp)
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Weight Cut").font(.headline)
@@ -231,14 +244,14 @@ struct CampView: View {
             }
 
             HStack(spacing: 12) {
-                weightStat("Current", "\(CampPlanner.fmt(w.currentKg))", "kg")
-                weightStat("To go", w.toGoKg > 0 ? "\(CampPlanner.fmt(w.toGoKg))" : "0", w.toGoKg > 0 ? "kg (\(CampPlanner.fmt(w.toGoPercent))%)" : "on weight")
-                weightStat("Trend", w.trendKgPerWeek.map { String(format: "%+.1f", $0) } ?? "–", "kg/week")
+                weightStat("Current", WeightUnits.number(w.currentKg, imp), u)
+                weightStat("To go", w.toGoKg > 0 ? WeightUnits.number(w.toGoKg, imp) : "0", w.toGoKg > 0 ? "\(u) (\(CampPlanner.fmt(w.toGoPercent))%)" : "on weight")
+                weightStat("Trend", w.trendKgPerWeek.map { String(format: "%+.1f", WeightUnits.value($0, imp)) } ?? "–", "\(u)/week")
             }
 
             if let req = w.requiredKgPerWeek, w.toGoKg > 0 {
-                Text("Needed: \(CampPlanner.fmt(req)) kg/week to make \(CampPlanner.fmt(w.targetKg)) kg" +
-                     (w.projectedFightWeightKg.map { " • on current trend you'll weigh \(CampPlanner.fmt($0)) kg" } ?? ""))
+                Text("Needed: \(WeightUnits.number(req, imp)) \(u)/week to make \(WeightUnits.text(w.targetKg, imp))" +
+                     (w.projectedFightWeightKg.map { " • on current trend you'll weigh \(WeightUnits.text($0, imp))" } ?? ""))
                     .font(.caption)
                     .foregroundStyle(w.isOnTrack ? Color.secondary : Color.orange)
             }
@@ -246,14 +259,14 @@ struct CampView: View {
             if recent.count >= 2 {
                 Chart {
                     ForEach(recent) { e in
-                        LineMark(x: .value("Date", e.date), y: .value("kg", e.weightKg))
+                        LineMark(x: .value("Date", e.date), y: .value("Weight", WeightUnits.value(e.weightKg, imp)))
                             .interpolationMethod(.monotone)
                             .foregroundStyle(.cyan)
-                        PointMark(x: .value("Date", e.date), y: .value("kg", e.weightKg))
+                        PointMark(x: .value("Date", e.date), y: .value("Weight", WeightUnits.value(e.weightKg, imp)))
                             .foregroundStyle(.cyan)
                             .symbolSize(24)
                     }
-                    RuleMark(y: .value("Target", w.targetKg))
+                    RuleMark(y: .value("Target", WeightUnits.value(w.targetKg, imp)))
                         .lineStyle(StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
                         .foregroundStyle(.green)
                         .annotation(position: .top, alignment: .leading) {
@@ -286,6 +299,26 @@ struct CampView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(warning.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
                 .accessibilityElement(children: .combine)
+            }
+
+            if healthKit.isAvailable {
+                Button {
+                    importingHealth = true
+                    Task {
+                        await healthKit.importWeighIns(into: workoutStore, profileID: workoutStore.activeProfileID)
+                        importingHealth = false
+                    }
+                } label: {
+                    HStack {
+                        if importingHealth { ProgressView().padding(.trailing, 4) }
+                        Label("Import weight from Apple Health", systemImage: "heart.text.square")
+                    }
+                    .font(.subheadline)
+                }
+                .disabled(importingHealth)
+                if !healthKit.statusMessage.isEmpty && !importingHealth {
+                    Text(healthKit.statusMessage).font(.caption2).foregroundStyle(.secondary)
+                }
             }
 
             if !w.series.isEmpty {
@@ -423,6 +456,91 @@ struct CampView: View {
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
     }
 
+    // MARK: Rehydration
+
+    private func rehydrationCard(_ w: WeightCutStatus, profile: AthleteProfile) -> some View {
+        let imp = profile.useImperial
+        let fight = profile.fightDate ?? Date()
+        let window = w.series.filter {
+            $0.date >= fight.addingTimeInterval(-14 * 86400) && $0.date <= fight.addingTimeInterval(-3 * 86400)
+        }
+        let preCut = window.map(\.weightKg).max() ?? w.currentKg
+        let lost = max(0, preCut - w.currentKg)
+        let fluidsL = max(1.0, lost * 1.5)
+        let carbsLow = Int(w.currentKg * 5), carbsHigh = Int(w.currentKg * 8)
+        return VStack(alignment: .leading, spacing: 10) {
+            Label("Rehydration plan (after weigh-ins)", systemImage: "drop.fill")
+                .font(.headline)
+                .foregroundStyle(.cyan)
+            if lost > 0 {
+                Text("You've cut about \(WeightUnits.text(lost, imp)) from \(WeightUnits.text(preCut, imp)).")
+                    .font(.subheadline.weight(.semibold))
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                bullet("Drink about \(String(format: "%.1f", fluidsL)) L (150% of weight lost) over the first 4–6 hours, in sips of 500–750 ml per hour, not all at once.")
+                bullet("Use an oral rehydration or electrolyte drink for the first litres. Sodium helps you keep the fluid.")
+                bullet("Eat \(carbsLow)–\(carbsHigh) g of carbohydrate over the next 24 h, in small, familiar, low-fibre meals every 2–3 hours.")
+                bullet("Aim for pale urine (1–3 on the chart) and re-weigh on fight morning.")
+            }
+            Text("General guidance for combat sports. Follow your coach's or dietitian's plan if you have one.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.cyan.opacity(0.1), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func bullet(_ text: String) -> some View {
+        Label {
+            Text(text).font(.caption).fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.cyan)
+        }
+    }
+
+    // MARK: Reminder
+
+    private var reminderCard: some View {
+        let timeBinding = Binding<Date>(
+            get: {
+                Calendar.current.date(bySettingHour: reminderMinutes / 60, minute: reminderMinutes % 60, second: 0, of: Date()) ?? Date()
+            },
+            set: { d in
+                let c = Calendar.current.dateComponents([.hour, .minute], from: d)
+                reminderMinutes = (c.hour ?? 7) * 60 + (c.minute ?? 0)
+                if reminderOn { scheduleReminder() }
+            }
+        )
+        return VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(get: { reminderOn }, set: { on in
+                reminderOn = on
+                if on { scheduleReminder() } else { MorningReminder.cancel() }
+            })) {
+                Label("Morning check-in reminder", systemImage: "bell.badge")
+                    .font(.headline)
+            }
+            if reminderOn {
+                DatePicker("Time", selection: timeBinding, displayedComponents: .hourAndMinute)
+            }
+            Text(reminderDenied ? "Notifications are off for FIGHT. Enable them in iOS Settings to get reminders." :
+                    "A daily nudge to weigh in and take your readiness check.")
+                .font(.caption)
+                .foregroundStyle(reminderDenied ? Color.orange : Color.secondary)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+    }
+
+    private func scheduleReminder() {
+        let h = reminderMinutes / 60, m = reminderMinutes % 60
+        Task {
+            let ok = await MorningReminder.schedule(hour: h, minute: m)
+            reminderDenied = !ok
+            if !ok { reminderOn = false }
+        }
+    }
+
     // MARK: Report
 
     private var reportCard: some View {
@@ -515,12 +633,12 @@ struct FightSetupSheet: View {
                     HStack {
                         TextField("Fight weight", text: $targetText)
                             .keyboardType(.decimalPad)
-                        Text("kg").foregroundStyle(.secondary)
+                        Text(WeightUnits.unit(workoutStore.activeProfile.useImperial)).foregroundStyle(.secondary)
                     }
                 } header: {
                     Text("Fight weight target")
                 } footer: {
-                    Text("Current weight: \(CampPlanner.fmt(workoutStore.activeProfile.weightKg)) kg")
+                    Text("Current weight: \(WeightUnits.text(workoutStore.activeProfile.weightKg, workoutStore.activeProfile.useImperial))")
                 }
                 if workoutStore.activeProfile.fightDate != nil {
                     Section {
@@ -550,14 +668,15 @@ struct FightSetupSheet: View {
                 let p = workoutStore.activeProfile
                 if let d = p.fightDate, d > Date() { fightDate = d }
                 campWeeks = p.campLengthWeeks
-                targetText = CampPlanner.fmt(p.targetFightWeightKg)
+                targetText = WeightUnits.number(p.targetFightWeightKg, p.useImperial)
             }
         }
     }
 
     private var parsedTarget: Double? {
-        guard let v = Double(targetText.replacingOccurrences(of: ",", with: ".")), v >= 35, v <= 200 else { return nil }
-        return v
+        guard let raw = Double(targetText.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        let kg = WeightUnits.toKg(raw, workoutStore.activeProfile.useImperial)
+        return (35...200).contains(kg) ? kg : nil
     }
 
     private func save() {
@@ -598,7 +717,7 @@ struct WeighInSheet: View {
                             .keyboardType(.decimalPad)
                             .font(.system(.largeTitle, design: .rounded).weight(.bold))
                             .focused($weightFocused)
-                        Text("kg").font(.title2).foregroundStyle(.secondary)
+                        Text(WeightUnits.unit(workoutStore.activeProfile.useImperial)).font(.title2).foregroundStyle(.secondary)
                     }
                     DatePicker("Time", selection: $date, in: ...Date())
                 } footer: {
@@ -648,15 +767,16 @@ struct WeighInSheet: View {
             .onAppear {
                 let p = workoutStore.activeProfile
                 let last = workoutStore.weighIns.first { $0.profileID == p.id }?.weightKg ?? p.weightKg
-                weightText = CampPlanner.fmt(last)
+                weightText = WeightUnits.number(last, p.useImperial)
                 weightFocused = true
             }
         }
     }
 
     private var parsedWeight: Double? {
-        guard let v = Double(weightText.replacingOccurrences(of: ",", with: ".")), v >= 30, v <= 250 else { return nil }
-        return v
+        guard let raw = Double(weightText.replacingOccurrences(of: ",", with: ".")) else { return nil }
+        let kg = WeightUnits.toKg(raw, workoutStore.activeProfile.useImperial)
+        return (30...250).contains(kg) ? kg : nil
     }
 
     private func save() {
@@ -683,7 +803,7 @@ struct WeighInHistoryView: View {
             ForEach(entries) { e in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("\(CampPlanner.fmt(e.weightKg)) kg").font(.headline).monospacedDigit()
+                        Text(WeightUnits.text(e.weightKg, workoutStore.activeProfile.useImperial)).font(.headline).monospacedDigit()
                         Text(e.date.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption).foregroundStyle(.secondary)
                         if !e.notes.isEmpty {
