@@ -12,6 +12,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     private let playerNode = AVAudioPlayerNode()
     private let synthesizer = AVSpeechSynthesizer()
     private var engineReady = false
+    private var audioEnabled = true
 
     private var tokenBuffers: [String: AVAudioPCMBuffer] = [:]
     private var beepHighBuffer: AVAudioPCMBuffer?
@@ -43,36 +44,48 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         buildSynthesizedCues()
     }
 
+    // Only wires the graph. The session and engine are started on demand by
+    // ensureEngineRunning(), so the app is not holding an active audio session
+    // (and staying awake in the background via UIBackgroundModes=audio) from launch.
     private func setupAudioSessionAndEngine() {
-        do {
-            let session = AVAudioSession.sharedInstance()
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true)
-        } catch {
-            print("AudioSession setup error: \(error)")
-        }
-
-        if !engineReady {
-            audioEngine.attach(playerNode)
-            let format = AVAudioFormat(standardFormatWithSampleRate: 22050, channels: 1)!
+        guard !engineReady else { return }
+        audioEngine.attach(playerNode)
+        if let format = AVAudioFormat(standardFormatWithSampleRate: 22050, channels: 1) {
             audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: format)
-            do {
-                try audioEngine.start()
-                playerNode.play()
-                engineReady = true
-            } catch {
-                print("AVAudioEngine start error: \(error)")
-            }
+            engineReady = true
         }
     }
 
     private func ensureEngineRunning() {
+        guard engineReady, audioEnabled else { return }
         if !audioEngine.isRunning {
-            try? audioEngine.start()
+            do {
+                let session = AVAudioSession.sharedInstance()
+                try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
+                try audioEngine.start()
+            } catch {
+                print("Audio start error: \(error)")
+                return
+            }
         }
         if !playerNode.isPlaying {
             playerNode.play()
         }
+    }
+
+    /// Call at workout start so cues can play again after a previous shutdown.
+    func prepareForWorkout() {
+        audioEnabled = true
+    }
+
+    /// Stops the engine and releases the audio session after a workout.
+    func shutdownAudio() {
+        audioEnabled = false
+        announcementQueue.removeAll()
+        playerNode.stop()
+        audioEngine.stop()
+        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 
     func prepareStrikeVocabulary() async {

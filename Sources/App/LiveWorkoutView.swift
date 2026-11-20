@@ -778,6 +778,7 @@ struct LiveWorkoutView: View {
         announced30sWarning = false
         announced10sWarning = false
         audioCoach.strikesCuedCount = 0
+        audioCoach.prepareForWorkout()
 
         startTime = Date()
         isRecording = true
@@ -792,11 +793,16 @@ struct LiveWorkoutView: View {
 
         startLiveActivity()
 
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
+        // Added in .common mode so ticks keep firing while the user scrolls
+        // (a plain scheduledTimer pauses during scroll tracking, which made the
+        // round clock and zone-time counters fall behind).
+        let t = Timer(timeInterval: 1.0, repeats: true) { _ in
             Task { @MainActor in
                 recordSecondTick()
             }
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     private func startBagEngine() {
@@ -1015,6 +1021,7 @@ struct LiveWorkoutView: View {
         timer?.invalidate()
         timer = nil
         audioCoach.stopBagCoachLoop()
+        audioCoach.shutdownAudio()
         isRecording = false
         UIApplication.shared.isIdleTimerDisabled = false
         endLiveActivity()

@@ -175,6 +175,7 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
                     central.connect(known, options: nil)
                 }
             } else {
+                isScanning = false
                 cleanupConnection(message: "Bluetooth is Off")
             }
         }
@@ -210,6 +211,12 @@ extension BLEHeartRateManager: CBCentralManagerDelegate {
             connectedDeviceName = peripheral.name ?? "CooSpo HRM"
             statusMessage = "Connected • Streaming HR"
             peripheral.discoverServices([hrServiceUUID, batteryServiceUUID])
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        Task { @MainActor in
+            cleanupConnection(message: "Couldn't connect — wake the strap (moisten pads) and tap Scan")
         }
     }
 

@@ -11,6 +11,8 @@ final class WorkoutStore: ObservableObject {
         }
     }
     @Published var savedGhostSessions: [GhostSession] = []
+    // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
+    private var cachedGhosts: [GhostSession] = []
 
     private let legacyProfilesKey = "coospo_fighter_profiles_v2"
     private let legacyActiveProfileKey = "coospo_active_profile_id_v2"
@@ -79,6 +81,7 @@ final class WorkoutStore: ObservableObject {
         loadWorkouts()
         loadExternalGhosts()
         runLosslessAutoCompression()
+        refreshGhostCache()
     }
 
     private struct ProfileContainer: Codable {
@@ -171,6 +174,7 @@ final class WorkoutStore: ObservableObject {
         workouts.removeAll { $0.id == w.id }
         workouts.insert(w, at: 0)
         workouts.sort { $0.startDate > $1.startDate }
+        refreshGhostCache()
     }
 
     func delete(_ workout: SavedWorkout) {
@@ -181,6 +185,7 @@ final class WorkoutStore: ObservableObject {
             try? FileManager.default.removeItem(at: archiveURL)
         }
         workouts.removeAll { $0.id == workout.id }
+        refreshGhostCache()
     }
 
     func resolvedSamples(for workout: SavedWorkout) -> [HeartRatePoint] {
@@ -261,7 +266,7 @@ final class WorkoutStore: ObservableObject {
 
     private func decompressLZFSE(_ data: Data) -> Data? {
         guard data.count > 4 else { return nil }
-        let originalSize = data.prefix(4).withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+        let originalSize = UInt32(littleEndian: data.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
         let payload = data.dropFirst(4)
         let dstCapacity = Int(originalSize) + 1024
         return payload.withUnsafeBytes { rawBuffer -> Data? in
@@ -323,9 +328,14 @@ final class WorkoutStore: ObservableObject {
             }
         }
         savedGhostSessions = ghosts
+        refreshGhostCache()
     }
 
     func allAvailableGhosts() -> [GhostSession] {
+        cachedGhosts
+    }
+
+    private func refreshGhostCache() {
         let fromWorkouts = workouts.prefix(15).map { w -> GhostSession in
             var g = w.toGhostSession()
             if g.samples.isEmpty {
@@ -343,12 +353,17 @@ final class WorkoutStore: ObservableObject {
             return g
         }.filter { !$0.samples.isEmpty }
 
-        return savedGhostSessions + fromWorkouts
+        cachedGhosts = savedGhostSessions + fromWorkouts
     }
 
     func exportTCXFile(for workout: SavedWorkout) -> URL {
         let samples = resolvedSamples(for: workout)
         let iso = ISO8601DateFormatter()
+        var rawNotes = "\(workout.category.rawValue) - \(workout.drillTag.rawValue) (RPE \(workout.rpe)/10)"
+        if !workout.notes.isEmpty {
+            rawNotes += " — " + workout.notes
+        }
+        let notesText = xmlEscape(rawNotes)
         var tcx = """
         <?xml version="1.0" encoding="UTF-8"?>
         <TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">
@@ -375,7 +390,7 @@ final class WorkoutStore: ObservableObject {
         tcx += """
                 </Track>
               </Lap>
-              <Notes>\(workout.category.rawValue) - \(workout.drillTag.rawValue) (RPE \(workout.rpe)/10)</Notes>
+              <Notes>\(notesText)</Notes>
             </Activity>
           </Activities>
         </TrainingCenterDatabase>
@@ -388,6 +403,13 @@ final class WorkoutStore: ObservableObject {
         let fileURL = exportsDirectory.appendingPathComponent(fileName)
         try? tcx.write(to: fileURL, atomically: true, encoding: .utf8)
         return fileURL
+    }
+
+    private func xmlEscape(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+         .replacingOccurrences(of: "\"", with: "&quot;")
     }
 
     var savedStorageBytes: Int64 {

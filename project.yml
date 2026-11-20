@@ -13,6 +13,12 @@ settings:
     MARKETING_VERSION: "2.0.0"
     CURRENT_PROJECT_VERSION: "1"
 
+# IMPORTANT: there is intentionally NO `info:` block on either target.
+# XcodeGen's `info:` block REGENERATES (overwrites) the plist at that path,
+# which wiped the Bluetooth usage strings, background modes and NSExtension
+# from the committed plists. Pointing INFOPLIST_FILE at the files and leaving
+# `info:` out makes the committed Info.plist files the single source of truth.
+
 targets:
   CoospoTracker:
     type: application
@@ -21,14 +27,12 @@ targets:
     sources:
       - path: Sources/App
       - path: Sources/Shared
-    info:
-      path: Sources/App/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shon.coospotracker
         PRODUCT_NAME: CoospoTracker
         INFOPLIST_FILE: Sources/App/Info.plist
-        ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS: YES
+        GENERATE_INFOPLIST_FILE: NO
     dependencies:
       - target: CoospoWidgetExtension
         embed: true
@@ -40,11 +44,6 @@ targets:
     sources:
       - path: Sources/Widget
       - path: Sources/Shared
-    info:
-      path: Sources/Widget/Info.plist
-      properties:
-        NSExtension:
-          NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.shon.coospotracker.widget
@@ -52,3 +51,4 @@ targets:
         INFOPLIST_FILE: Sources/Widget/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
