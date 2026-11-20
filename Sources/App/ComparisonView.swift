@@ -194,7 +194,7 @@ struct ComparisonView: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background((diff == 0 ? Color.gray : (improved ? Color.green : Color.red)).opacity(0.2), in: Capsule())
-                .foregroundStyle(diff == 0 ? .secondary : (improved ? .green : .red))
+                .foregroundStyle(diff == 0 ? Color.secondary : (improved ? .green : .red))
         }
     }
 

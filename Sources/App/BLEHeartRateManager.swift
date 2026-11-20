@@ -31,10 +31,10 @@ final class BLEHeartRateManager: NSObject, ObservableObject {
     private let lastDeviceUUIDKey = "coospo_last_device_uuid_v1"
 
     // Standard Bluetooth SIG Heart Rate & Battery UUIDs
-    private let hrServiceUUID = CBUUID(string: "180D")
-    private let hrMeasurementUUID = CBUUID(string: "2A37")
-    private let batteryServiceUUID = CBUUID(string: "180F")
-    private let batteryLevelUUID = CBUUID(string: "2A19")
+    nonisolated private let hrServiceUUID = CBUUID(string: "180D")
+	nonisolated private let hrMeasurementUUID = CBUUID(string: "2A37")
+	nonisolated private let batteryServiceUUID = CBUUID(string: "180F")
+	nonisolated private let batteryLevelUUID = CBUUID(string: "2A19")
 
     override init() {
         super.init()
