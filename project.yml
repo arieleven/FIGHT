@@ -1,0 +1,28 @@
+name: CoospoTracker
+options:
+  bundleIdPrefix: com.coospotracker
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  CoospoTracker:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Coospo Workout
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSBluetoothAlwaysUsageDescription: "Connects to your Coospo HW9 heart rate monitor during workouts."
+        NSBluetoothPeripheralUsageDescription: "Connects to your Coospo HW9 heart rate monitor during workouts."
+        UIBackgroundModes:
+          - bluetooth-central
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.coospotracker.app
+        SWIFT_VERSION: "5.9"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_ALLOWED: NO
