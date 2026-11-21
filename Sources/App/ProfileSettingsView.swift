@@ -5,6 +5,9 @@ struct ProfileSettingsView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var healthKit: HealthKitManager
     @EnvironmentObject var navigation: AppNavigation
+    @EnvironmentObject var session: WorkoutSession
+    @EnvironmentObject var undo: UndoCenter
+    @State private var confirmingDelete = false
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
     @AppStorage("fight.advanced.profile") private var showAdvanced = false
@@ -39,41 +42,61 @@ struct ProfileSettingsView: View {
                             Text(p.name).tag(p.id)
                         }
                     }
+                    .disabled(session.isRecording)
 
-                    Button {
-                        newFighterName = ""
-                        showingNewProfileAlert = true
-                    } label: {
-                        Label("Add Another Person / Sparring Partner", systemImage: "person.badge.plus")
-                    }
-
-                    Button {
-                        navigation.requestSetup = true
-                    } label: {
-                        Label("Run Setup Again", systemImage: "wand.and.stars")
-                    }
-
-                    Button {
-                        workoutStore.loadSampleFighter()
-                        navigation.selectedTab = .coach
-                    } label: {
-                        Label(profile.name == SampleData.profileName ? "Viewing Sample Fighter" : "Try FIGHT With Sample Data",
-                              systemImage: "sparkles")
-                    }
-                    .disabled(profile.name == SampleData.profileName)
-
-                    if workoutStore.profiles.count > 1 {
-                        Button(role: .destructive) {
-                            workoutStore.deleteProfile(profile)
+                    if !session.isRecording {
+                        Button {
+                            newFighterName = ""
+                            showingNewProfileAlert = true
                         } label: {
-                            Label(profile.name == SampleData.profileName ? "Remove Sample Data" : "Delete Current Profile", systemImage: "trash")
+                            Label("Add Another Person / Sparring Partner", systemImage: "person.badge.plus")
+                        }
+
+                        Button {
+                            navigation.requestSetup = true
+                        } label: {
+                            Label("Run Setup Again", systemImage: "wand.and.stars")
+                        }
+
+                        if profile.name != SampleData.profileName {
+                            Button {
+                                workoutStore.loadSampleFighter()
+                                navigation.selectedTab = .coach
+                            } label: {
+                                Label("Try FIGHT With Sample Data", systemImage: "sparkles")
+                            }
+                        }
+
+                        if !workoutStore.trash.isEmpty || !workoutStore.deletedProfiles.isEmpty || !workoutStore.foundFighters.isEmpty {
+                            NavigationLink {
+                                RecentlyDeletedView()
+                            } label: {
+                                Label("Recently Deleted", systemImage: "trash")
+                            }
                         }
                     }
                 } header: {
                     Text("Fighter")
                 } footer: {
-                    if profile.name == SampleData.profileName {
+                    if session.isRecording {
+                        Text("Finish your workout to switch or change fighters.")
+                    } else if profile.name == SampleData.profileName {
                         Text("A sample fighter with 3 sessions, a week of morning checks and weigh-ins, and a fight in 5 weeks. Your own data is untouched. Switch back with the Fighter picker.")
+                    }
+                }
+
+                if !session.isRecording && workoutStore.profiles.count > 1 {
+                    Section {
+                        Button(role: .destructive) {
+                            confirmingDelete = true
+                        } label: {
+                            Label(profile.name == SampleData.profileName ? "Remove Sample Data" : "Delete \(profile.name)",
+                                  systemImage: "trash")
+                        }
+                    } footer: {
+                        if profile.name != SampleData.profileName {
+                            Text("You can restore a deleted fighter from Recently Deleted for 30 days.")
+                        }
                     }
                 }
 
@@ -340,6 +363,19 @@ struct ProfileSettingsView: View {
                 }
             }
             .navigationTitle("Fighter")
+            .confirmationDialog(deleteTitle(profile), isPresented: $confirmingDelete, titleVisibility: .visible) {
+                Button(profile.name == SampleData.profileName ? "Remove Sample Data" : "Delete \(profile.name)", role: .destructive) {
+                    let removed = profile
+                    workoutStore.deleteProfile(removed)
+                    if removed.name != SampleData.profileName,
+                       let d = workoutStore.deletedProfiles.first(where: { $0.id == removed.id }) {
+                        undo.show("\(removed.name) deleted") { workoutStore.restore(d) }
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(deleteMessage(profile))
+            }
             .alert("New Fighter Profile", isPresented: $showingNewProfileAlert) {
                 TextField("Fighter Name", text: $newFighterName)
                 Button("Create") {
@@ -356,6 +392,16 @@ struct ProfileSettingsView: View {
 
     private var heightChip: UnitChip {
         UnitChip(metric: "cm", imperial: "ft", isImperial: binding(for: \.heightImperial), accessibilityName: "Height unit")
+    }
+
+    private func deleteTitle(_ p: AthleteProfile) -> String {
+        p.name == SampleData.profileName ? "Remove the sample fighter?" : "Delete \(p.name)?"
+    }
+
+    private func deleteMessage(_ p: AthleteProfile) -> String {
+        if p.name == SampleData.profileName { return "This removes the sample sessions, checks and weigh-ins. Your own data stays." }
+        let c = workoutStore.dataCounts(for: p.id)
+        return "This removes \(p.name)'s profile, \(c.sessions) session\(c.sessions == 1 ? "" : "s"), \(c.weighIns) weigh-in\(c.weighIns == 1 ? "" : "s") and fighter card. It stays in Recently Deleted for 30 days."
     }
 
     private func wheelValueRow(title: String, valueText: String, wheel: ActiveWheelPicker, unit: UnitChip? = nil) -> some View {

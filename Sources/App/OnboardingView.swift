@@ -21,10 +21,16 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ProgressView(value: Double(page + 1), total: Double(pages))
-                .tint(.red)
-                .padding(.horizontal)
-                .padding(.top, 12)
+            HStack(spacing: 12) {
+                if workoutStore.activeProfile.setupDone {
+                    Button("Close") { dismiss() }
+                        .accessibilityHint("Closes setup without changing anything")
+                }
+                ProgressView(value: Double(page + 1), total: Double(pages))
+                    .tint(.red)
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
             TabView(selection: $page) {
                 aboutYou.tag(0)
                 discipline.tag(1)
@@ -305,6 +311,7 @@ struct FirstRunModifier: ViewModifier {
     @AppStorage("fight.morningOffered") private var morningOffered = ""
     @State private var showingOnboarding = false
     @State private var offerMorningCheck = false
+    @State private var found: FoundFighter?
 
     func body(content: Content) -> some View {
         content
@@ -320,8 +327,23 @@ struct FirstRunModifier: ViewModifier {
             } message: {
                 Text("Take the 2-minute readiness check so FIGHT can plan today.")
             }
+            .alert(found.map { "Restore \($0.name)?" } ?? "", isPresented: Binding(get: { found != nil }, set: { if !$0 { found = nil } })) {
+                Button("Restore") {
+                    if let f = found { workoutStore.restore(f) }
+                    found = nil
+                }
+                Button("Not Now", role: .cancel) { found = nil }
+            } message: {
+                if let f = found {
+                    Text("FIGHT found \(f.sessions) session\(f.sessions == 1 ? "" : "s") from \(f.name), a fighter that was deleted. You can also restore later from You → Recently Deleted.")
+                }
+            }
             .task {
                 try? await Task.sleep(nanoseconds: 600_000_000)
+                if let f = workoutStore.foundFighters.first {
+                    found = f
+                    return
+                }
                 if needsSetup {
                     showingOnboarding = true
                 } else {

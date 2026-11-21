@@ -12,6 +12,7 @@ extension UTType {
 
 struct PlanLibraryView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var undo: UndoCenter
     @EnvironmentObject var navigation: AppNavigation
 
     @State private var editingNew = false
@@ -38,7 +39,13 @@ struct PlanLibraryView: View {
                         }
                     }
                     .onDelete { offsets in
-                        for i in offsets { workoutStore.deletePlan(workoutStore.plans[i]) }
+                        let removed = offsets.map { workoutStore.plans[$0] }
+                        let before = workoutStore.plans
+                        for p in removed { workoutStore.deletePlan(p) }
+                        undo.show(removed.count == 1 ? "\(removed[0].title) deleted" : "Plans deleted") {
+                            for p in removed { workoutStore.upsertPlan(p) }
+                            workoutStore.reorderPlans(like: before)
+                        }
                     }
                     .onMove { workoutStore.movePlans(from: $0, to: $1) }
                 }
@@ -282,10 +289,12 @@ struct PlanEditorView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var draft: TrainingPlan
+    private let original: TrainingPlan
     let isNew: Bool
 
     init(plan: TrainingPlan, isNew: Bool) {
         _draft = State(initialValue: plan)
+        original = plan
         self.isNew = isNew
     }
 
@@ -338,12 +347,13 @@ struct PlanEditorView: View {
             }
             .navigationTitle(isNew ? "New Plan" : "Edit Plan")
             .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(draft != original)
             .toolbar {
                 ToolbarItem(placement: .bottomBar) {
                     EditButton()
                 }
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    DiscardChangesButton(hasChanges: draft != original) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {

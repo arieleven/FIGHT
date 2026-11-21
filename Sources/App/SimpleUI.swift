@@ -125,3 +125,89 @@ struct UnitChip: View {
         withAnimation(.snappy(duration: 0.25)) { isImperial.toggle() }
     }
 }
+
+// MARK: - Undo bar
+
+/// "Workout deleted · Undo" for a few seconds after something small is removed.
+@MainActor
+final class UndoCenter: ObservableObject {
+    struct Item: Identifiable {
+        let id = UUID()
+        let message: String
+        let undo: () -> Void
+    }
+
+    @Published private(set) var item: Item?
+
+    func show(_ message: String, undo: @escaping () -> Void) {
+        let new = Item(message: message, undo: undo)
+        withAnimation(.snappy) { item = new }
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard let self, self.item?.id == new.id else { return }
+            withAnimation(.snappy) { self.item = nil }
+        }
+    }
+
+    func performUndo() {
+        guard let i = item else { return }
+        i.undo()
+        withAnimation(.snappy) { item = nil }
+    }
+
+    func dismiss() {
+        withAnimation(.snappy) { item = nil }
+    }
+}
+
+private struct UndoBar: View {
+    @EnvironmentObject var undo: UndoCenter
+
+    var body: some View {
+        if let item = undo.item {
+            HStack(spacing: 12) {
+                Text(item.message)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                Spacer()
+                Button("Undo") { undo.performUndo() }
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.yellow)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color(white: 0.15), in: RoundedRectangle(cornerRadius: 14))
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
+            .accessibilityAction(named: "Undo") { undo.performUndo() }
+        }
+    }
+}
+
+extension View {
+    /// Shows the shared undo bar at the bottom of this screen.
+    func undoHost(bottomInset: CGFloat = 0) -> some View {
+        overlay(alignment: .bottom) { UndoBar().padding(.bottom, bottomInset) }
+    }
+}
+
+/// Asks before throwing away unsaved edits; closes straight away when nothing changed.
+struct DiscardChangesButton: View {
+    let hasChanges: Bool
+    let onDiscard: () -> Void
+    @State private var asking = false
+
+    var body: some View {
+        Button("Cancel") {
+            if hasChanges { asking = true } else { onDiscard() }
+        }
+        .confirmationDialog("Discard your changes?", isPresented: $asking, titleVisibility: .visible) {
+            Button("Discard Changes", role: .destructive, action: onDiscard)
+            Button("Keep Editing", role: .cancel) {}
+        }
+    }
+}

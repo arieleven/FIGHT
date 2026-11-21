@@ -186,6 +186,8 @@ final class WorkoutSession: ObservableObject {
     @Published private(set) var autoHRREvents: [AutoHRREvent] = []
     @Published private(set) var latestAutoHRRBanner: String?
     @Published var lthrTestResultBanner: Int?
+    /// Zones before the last LTHR test, so its result can be undone.
+    private var previousThreshold: (lthr: Int, method: ZoneCalculationMethod)?
     @Published private(set) var liveAlpha1: Double?
     @Published private(set) var pendingRecoveryRemaining: Int?
     @Published private(set) var bagSessionComplete = false
@@ -863,6 +865,7 @@ final class WorkoutSession: ObservableObject {
             let source = trial.count >= 30 ? trial : samples
             if !source.isEmpty {
                 var updated = current
+                previousThreshold = (current.lactateThresholdHR, current.zoneMethod)
                 updated.lactateThresholdHR = source.map(\.bpm).reduce(0, +) / source.count
                 updated.zoneMethod = .lactateThreshold
                 updated.sanitize()
@@ -889,15 +892,26 @@ final class WorkoutSession: ObservableObject {
         showingSummary = true
     }
 
-    func discard() {
-        guard isRecording else { return }
+    /// Discards the session into Recently Deleted (so it can still be restored) and returns it.
+    @discardableResult
+    func discard() -> SavedWorkout? {
+        guard isRecording else { return nil }
+        let end = Date()
+        let draft = makeDraft(now: end)
         stopRecordingCommon()
+        var trashed: SavedWorkout?
+        if let store, !draft.samples.isEmpty || draft.elapsedSeconds >= 60 {
+            let w = WorkoutFinalizer.makeWorkout(from: draft, profile: store.activeProfile, ghost: nil, end: end)
+            store.saveToTrash(w)
+            trashed = w
+        }
         deleteDraft()
         samples.removeAll()
         completedRounds.removeAll()
         elapsedSeconds = 0
         liveAlpha1 = nil
         resetPlanState()
+        return trashed
     }
 
     private func resetPlanState() {
@@ -1156,6 +1170,17 @@ final class WorkoutSession: ObservableObject {
     private func handleNod() {
         guard isRecording, roundTimerEnabled, isRestPeriod, phaseRemaining > 3, !isInPlanTransition else { return }
         phaseElapsed = currentPhaseTarget
+    }
+
+    /// Puts zones back the way they were before the LTHR test.
+    func undoLTHRTest() {
+        guard let prev = previousThreshold, let store else { return }
+        var p = store.activeProfile
+        p.lactateThresholdHR = prev.lthr
+        p.zoneMethod = prev.method
+        store.activeProfile = p
+        previousThreshold = nil
+        lthrTestResultBanner = nil
     }
 
     /// Lets Shortcuts and the Live Activity skip the rest.
@@ -1433,13 +1458,23 @@ final class WorkoutSession: ObservableObject {
     }
 
     /// Saves or discards a workout recovered after the app was closed mid-session.
+    /// Hides the recovery question without losing anything; it's asked again next launch.
+    func postponeRecoveredDraft() {
+        recoverableDraft = nil
+    }
+
     func resolveRecoveredDraft(save: Bool) {
         guard let draft = recoverableDraft else { return }
         recoverableDraft = nil
         deleteDraft()
-        guard save, let store else { return }
+        guard let store else { return }
         let owner = store.profiles.first { $0.id == draft.profileID } ?? store.activeProfile
         let saved = WorkoutFinalizer.makeWorkout(from: draft, profile: owner, ghost: nil, end: draft.lastUpdate)
+        guard save else {
+            // "Discard" still keeps it in Recently Deleted for 30 days.
+            store.saveToTrash(saved)
+            return
+        }
         store.save(saved)
         finishedWorkout = saved
         showingSummary = true

@@ -2,6 +2,18 @@ import Foundation
 import Compression
 import UIKit
 
+struct DeletedProfile: Codable, Identifiable {
+    var profile: AthleteProfile
+    var deletedAt: Date
+    var id: UUID { profile.id }
+}
+
+struct FoundFighter: Identifiable, Equatable {
+    let id: UUID
+    let name: String
+    let sessions: Int
+}
+
 @MainActor
 final class WorkoutStore: ObservableObject {
     @Published var workouts: [SavedWorkout] = []
@@ -16,6 +28,9 @@ final class WorkoutStore: ObservableObject {
     @Published var weighIns: [WeighIn] = []
     @Published var plans: [TrainingPlan] = []
     @Published var soreness: [SorenessEntry] = []
+    /// Recently Deleted.
+    @Published var trash: [SavedWorkout] = []
+    @Published var deletedProfiles: [DeletedProfile] = []
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
     private var cachedGhosts: [GhostSession] = []
 
@@ -92,11 +107,14 @@ final class WorkoutStore: ObservableObject {
         loadWeighIns()
         loadPlans()
         loadSoreness()
+        // After everything is loaded, so clean-up never saves a half-loaded list.
+        purgeOldTrash()
     }
 
     private struct ProfileContainer: Codable {
         var activeProfileID: UUID
         var profiles: [AthleteProfile]
+        var deleted: [DeletedProfile]?
     }
 
     private func loadProfilesFromDisk() {
@@ -107,6 +125,7 @@ final class WorkoutStore: ObservableObject {
            !container.profiles.isEmpty {
             self.profiles = container.profiles
             self.activeProfileID = container.activeProfileID
+            self.deletedProfiles = container.deleted ?? []
             return
         }
 
@@ -117,7 +136,7 @@ final class WorkoutStore: ObservableObject {
     }
 
     func saveProfilesToDisk() {
-        let container = ProfileContainer(activeProfileID: activeProfileID, profiles: profiles)
+        let container = ProfileContainer(activeProfileID: activeProfileID, profiles: profiles, deleted: deletedProfiles)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(container) {
@@ -158,15 +177,79 @@ final class WorkoutStore: ObservableObject {
         profiles.removeAll { $0.id == profile.id }
         if profile.name == SampleData.profileName {
             // Sample data is removed completely with its profile.
-            for w in workouts where w.profileID == profile.id { delete(w) }
+            for w in workouts + trash where w.profileID == profile.id { permanentlyDelete(w) }
             readinessReadings.removeAll { $0.profileID == profile.id }
             saveReadiness()
             weighIns.removeAll { $0.profileID == profile.id }
             saveWeighIns()
+        } else {
+            // Real fighters go to Recently Deleted with their sessions.
+            let now = Date()
+            for w in workouts where w.profileID == profile.id {
+                var t = w
+                t.deletedAt = now
+                writeWorkoutMetadata(t)
+                trash.insert(t, at: 0)
+            }
+            workouts.removeAll { $0.profileID == profile.id }
+            refreshGhostCache()
+            deletedProfiles.insert(DeletedProfile(profile: profile, deletedAt: now), at: 0)
         }
         if activeProfileID == profile.id, let first = profiles.first {
             activeProfileID = first.id
         }
+        saveProfilesToDisk()
+    }
+
+    func restore(_ deleted: DeletedProfile) {
+        deletedProfiles.removeAll { $0.id == deleted.id }
+        if !profiles.contains(where: { $0.id == deleted.id }) { profiles.append(deleted.profile) }
+        for w in trash where w.profileID == deleted.id { restore(w) }
+        activeProfileID = deleted.id
+        saveProfilesToDisk()
+    }
+
+    /// Removes a deleted fighter and everything they logged, for good.
+    func permanentlyDelete(_ deleted: DeletedProfile) {
+        let id = deleted.id
+        deletedProfiles.removeAll { $0.id == id }
+        for w in trash + workouts where w.profileID == id { permanentlyDelete(w) }
+        weighIns.removeAll { $0.profileID == id }
+        saveWeighIns()
+        readinessReadings.removeAll { $0.profileID == id }
+        saveReadiness()
+        soreness.removeAll { $0.profileID == id }
+        saveSoreness()
+        setFighterPhoto(nil, for: id)
+        saveProfilesToDisk()
+    }
+
+    /// Counts shown before deleting a fighter.
+    func dataCounts(for profileID: UUID) -> (sessions: Int, weighIns: Int) {
+        (workouts.filter { $0.profileID == profileID }.count, weighIns.filter { $0.profileID == profileID }.count)
+    }
+
+    /// Sessions whose fighter no longer exists (e.g. a fighter deleted before Recently Deleted existed).
+    var foundFighters: [FoundFighter] {
+        let known = Set(profiles.map(\.id) + deletedProfiles.map(\.id))
+        let orphans = workouts.filter { !known.contains($0.profileID) }
+        return Dictionary(grouping: orphans, by: \.profileID).map { id, ws in
+            FoundFighter(id: id, name: ws.first?.profileName ?? "Fighter", sessions: ws.count)
+        }
+        .sorted { $0.sessions > $1.sessions }
+    }
+
+    /// Brings back a fighter from their orphaned sessions.
+    func restore(_ found: FoundFighter) {
+        guard !profiles.contains(where: { $0.id == found.id }) else { return }
+        var p = AthleteProfile()
+        p.id = found.id
+        p.name = found.name
+        p.setupDone = true
+        if let w = weighIns.first(where: { $0.profileID == found.id }) { p.weightKg = w.weightKg }
+        p.sanitize()
+        profiles.append(p)
+        activeProfileID = p.id
         saveProfilesToDisk()
     }
 
@@ -184,7 +267,8 @@ final class WorkoutStore: ObservableObject {
                 loaded.append(workout)
             }
         }
-        workouts = loaded.sorted { $0.startDate > $1.startDate }
+        workouts = loaded.filter { $0.deletedAt == nil }.sorted { $0.startDate > $1.startDate }
+        trash = loaded.filter { $0.deletedAt != nil }.sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }
     }
 
     func save(_ workout: SavedWorkout) {
@@ -247,7 +331,51 @@ final class WorkoutStore: ObservableObject {
         return result
     }
 
+    // MARK: - Recently Deleted
+
+    /// Days deleted things are kept before they're gone for good.
+    static let trashDays = 30.0
+
+    /// Moves a workout to Recently Deleted. It can be restored for 30 days.
     func delete(_ workout: SavedWorkout) {
+        var w = workout
+        w.deletedAt = Date()
+        writeWorkoutMetadata(w)
+        workouts.removeAll { $0.id == w.id }
+        trash.removeAll { $0.id == w.id }
+        trash.insert(w, at: 0)
+        refreshGhostCache()
+    }
+
+    /// Puts a workout straight into Recently Deleted (a discarded session).
+    func saveToTrash(_ workout: SavedWorkout) {
+        var w = workout
+        w.deletedAt = Date()
+        writeWorkoutMetadata(w)
+        trash.removeAll { $0.id == w.id }
+        trash.insert(w, at: 0)
+    }
+
+    func restore(_ workout: SavedWorkout) {
+        var w = workout
+        w.deletedAt = nil
+        writeWorkoutMetadata(w)
+        trash.removeAll { $0.id == w.id }
+        workouts.removeAll { $0.id == w.id }
+        workouts.append(w)
+        workouts.sort { $0.startDate > $1.startDate }
+        refreshGhostCache()
+    }
+
+    private func purgeOldTrash(now: Date = Date()) {
+        let limit = Self.trashDays * 86400
+        for w in trash where now.timeIntervalSince(w.deletedAt ?? now) > limit { permanentlyDelete(w) }
+        let expired = deletedProfiles.filter { now.timeIntervalSince($0.deletedAt) > limit }
+        for d in expired { permanentlyDelete(d) }
+    }
+
+    /// Removes a workout and its files for good.
+    func permanentlyDelete(_ workout: SavedWorkout) {
         let metaURL = workoutsDirectory.appendingPathComponent("\(workout.id.uuidString).json")
         try? FileManager.default.removeItem(at: metaURL)
         if let archiveName = workout.archiveFileName {
@@ -255,6 +383,7 @@ final class WorkoutStore: ObservableObject {
             try? FileManager.default.removeItem(at: archiveURL)
         }
         workouts.removeAll { $0.id == workout.id }
+        trash.removeAll { $0.id == workout.id }
         refreshGhostCache()
     }
 
@@ -546,6 +675,13 @@ final class WorkoutStore: ObservableObject {
     }
 
     /// Adds or updates a plan (matched by id).
+    /// Puts plans back in a previous order (after an undo).
+    func reorderPlans(like order: [TrainingPlan]) {
+        let index = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1.id, $0) })
+        plans.sort { (index[$0.id] ?? .max) < (index[$1.id] ?? .max) }
+        savePlans()
+    }
+
     func upsertPlan(_ plan: TrainingPlan) {
         if let i = plans.firstIndex(where: { $0.id == plan.id }) {
             plans[i] = plan

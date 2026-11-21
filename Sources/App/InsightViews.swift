@@ -443,6 +443,7 @@ struct SorenessRegionPicker: View {
 
 struct SorenessLogSheet: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var undo: UndoCenter
     @Environment(\.dismiss) private var dismiss
     @State private var regions: Set<BodyRegion> = []
     @State private var severity = 2
@@ -474,7 +475,10 @@ struct SorenessLogSheet: View {
                             }
                             .font(.subheadline)
                             .swipeActions {
-                                Button("Delete", role: .destructive) { workoutStore.deleteSoreness(e) }
+                                Button("Delete", role: .destructive) {
+                                    workoutStore.deleteSoreness(e)
+                                    undo.show("\(e.region.rawValue) entry deleted") { workoutStore.addSoreness([e]) }
+                                }
                             }
                         }
                     }
@@ -485,6 +489,7 @@ struct SorenessLogSheet: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .undoHost()
             .navigationTitle("Soreness Log")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct HistoryListView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var undo: UndoCenter
     @State private var selectedFilter: WorkoutCategory?
     /// History shows the active fighter only, unless you ask for everyone.
     @AppStorage("fight.history.allFighters") private var showAllFighters = false
@@ -66,8 +67,10 @@ struct HistoryListView: View {
                                 }
                             }
                             .onDelete { offsets in
-                                for idx in offsets {
-                                    workoutStore.delete(group.workouts[idx])
+                                let removed = offsets.map { group.workouts[$0] }
+                                for w in removed { workoutStore.delete(w) }
+                                undo.show(removed.count == 1 ? "Workout deleted" : "\(removed.count) workouts deleted") {
+                                    for w in removed { workoutStore.restore(w) }
                                 }
                             }
                         } header: {

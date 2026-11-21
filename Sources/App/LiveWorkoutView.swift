@@ -7,6 +7,7 @@ struct LiveWorkoutView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var navigation: AppNavigation
     @EnvironmentObject var session: WorkoutSession
+    @EnvironmentObject var undo: UndoCenter
     @ScaledMetric(relativeTo: .largeTitle) private var heroBPMSize: CGFloat = 74
 
     @State private var showingDeviceSheet = false
@@ -146,17 +147,22 @@ struct LiveWorkoutView: View {
             .confirmationDialog(session.bagSessionComplete ? "Bag session complete" : "Finish workout?",
                                 isPresented: $showingFinishConfirm, titleVisibility: .visible) {
                 Button("Save Workout") { session.finishAndSave() }
-                Button("Discard Workout", role: .destructive) { session.discard() }
+                Button("Discard Workout", role: .destructive) {
+                    if let w = session.discard() {
+                        undo.show("Workout discarded") { workoutStore.restore(w) }
+                    }
+                }
                 Button("Keep Going", role: .cancel) {}
             } message: {
                 Text("\(formatDuration(session.elapsedSeconds)) recorded")
             }
             .alert("Recover unfinished workout?", isPresented: Binding(
                 get: { session.recoverableDraft != nil },
-                set: { if !$0 && session.recoverableDraft != nil { session.resolveRecoveredDraft(save: false) } }
+                set: { if !$0 && session.recoverableDraft != nil { session.postponeRecoveredDraft() } }
             )) {
                 Button("Save It") { session.resolveRecoveredDraft(save: true) }
                 Button("Discard", role: .destructive) { session.resolveRecoveredDraft(save: false) }
+                Button("Decide Later", role: .cancel) { session.postponeRecoveredDraft() }
             } message: {
                 if let d = session.recoverableDraft {
                     Text("A \(d.category.rawValue) session from \(d.startTime.formatted(date: .abbreviated, time: .shortened)) (\(formatDuration(d.elapsedSeconds))) was interrupted.")
@@ -369,13 +375,17 @@ struct LiveWorkoutView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Lactate threshold updated: \(lthr) BPM")
                     .font(.subheadline.weight(.bold))
-                Text("Your zones now use the LTHR model.")
+                Text("Your zones now use this threshold.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("OK") { session.lthrTestResultBanner = nil }
+            Button("Undo") { session.undoLTHRTest() }
                 .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Keep") { session.lthrTestResultBanner = nil }
+                .buttonStyle(.borderedProminent)
+                .tint(.green)
                 .controlSize(.small)
         }
         .padding(12)

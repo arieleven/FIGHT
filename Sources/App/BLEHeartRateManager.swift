@@ -489,6 +489,7 @@ extension BLEHeartRateManager: CBPeripheralDelegate {
 // MARK: - Sensor picker
 
 struct DeviceScannerSheet: View {
+    @State private var confirmingDisconnect = false
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @Environment(\.dismiss) private var dismiss
     @State private var showAllDevices = false
@@ -539,7 +540,17 @@ struct DeviceScannerSheet: View {
                                 }
                             }
                             Button("Disconnect", role: .destructive) {
-                                bleManager.disconnect()
+                                if WorkoutSession.shared?.isRecording == true {
+                                    confirmingDisconnect = true
+                                } else {
+                                    bleManager.disconnect()
+                                }
+                            }
+                            .confirmationDialog("Stop heart-rate recording?", isPresented: $confirmingDisconnect, titleVisibility: .visible) {
+                                Button("Disconnect", role: .destructive) { bleManager.disconnect() }
+                                Button("Keep Connected", role: .cancel) {}
+                            } message: {
+                                Text("A workout is running. Without the strap, the rest of it is recorded without heart rate.")
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)

@@ -806,6 +806,8 @@ struct SavedWorkout: Codable, Identifiable {
     var roundResults: [String] = []
     /// Total bag hits heard by the microphone.
     var impactsCount: Int?
+    /// Set when moved to Recently Deleted (kept 30 days).
+    var deletedAt: Date?
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -818,7 +820,7 @@ struct SavedWorkout: Codable, Identifiable {
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
         case trainingPlanID, trainingPlanTitle, blockResults
         case comboEvents, headMovesPerMinute, breathingGuided
-        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount
+        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt
     }
 
     init(
@@ -959,6 +961,7 @@ struct SavedWorkout: Codable, Identifiable {
         partner = (try? c.decodeIfPresent(String.self, forKey: .partner)) ?? nil
         roundResults = (try? c.decodeIfPresent([String].self, forKey: .roundResults)) ?? []
         impactsCount = (try? c.decodeIfPresent(Int.self, forKey: .impactsCount)) ?? nil
+        deletedAt = (try? c.decodeIfPresent(Date.self, forKey: .deletedAt)) ?? nil
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

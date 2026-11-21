@@ -663,7 +663,9 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 struct FightSetupSheet: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var undo: UndoCenter
     @Environment(\.dismiss) private var dismiss
+    @State private var original: (Date, Int, String)?
 
     @State private var fightDate = Date().addingTimeInterval(56 * 86400)
     @State private var campWeeks = 8
@@ -703,8 +705,14 @@ struct FightSetupSheet: View {
                     Section {
                         Button("Remove Fight Date", role: .destructive) {
                             var p = workoutStore.activeProfile
+                            let old = p.fightDate
                             p.fightDate = nil
                             workoutStore.activeProfile = p
+                            undo.show("Fight date removed") {
+                                var q = workoutStore.activeProfile
+                                q.fightDate = old
+                                workoutStore.activeProfile = q
+                            }
                             dismiss()
                         }
                     }
@@ -712,9 +720,10 @@ struct FightSetupSheet: View {
             }
             .navigationTitle("Fight Setup")
             .navigationBarTitleDisplayMode(.inline)
+            .interactiveDismissDisabled(fightSetupChanged)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    DiscardChangesButton(hasChanges: fightSetupChanged) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }
@@ -728,8 +737,14 @@ struct FightSetupSheet: View {
                 if let d = p.fightDate, d > Date() { fightDate = d }
                 campWeeks = p.campLengthWeeks
                 targetText = WeightUnits.number(p.targetFightWeightKg, p.useImperial)
+                original = (fightDate, campWeeks, targetText)
             }
         }
+    }
+
+    private var fightSetupChanged: Bool {
+        guard let o = original else { return false }
+        return o.0 != fightDate || o.1 != campWeeks || o.2 != targetText
     }
 
     private var parsedTarget: Double? {
@@ -855,6 +870,7 @@ struct WeighInSheet: View {
 
 struct WeighInHistoryView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var undo: UndoCenter
 
     var body: some View {
         let entries = workoutStore.weighIns.filter { $0.profileID == workoutStore.activeProfileID }
@@ -879,7 +895,11 @@ struct WeighInHistoryView: View {
                 }
             }
             .onDelete { offsets in
-                for i in offsets { workoutStore.deleteWeighIn(entries[i]) }
+                let removed = offsets.map { entries[$0] }
+                for e in removed { workoutStore.deleteWeighIn(e) }
+                undo.show("Weigh-in deleted") {
+                    for e in removed { workoutStore.addWeighIn(e) }
+                }
             }
         }
         .navigationTitle("Weigh-Ins")

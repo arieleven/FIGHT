@@ -261,6 +261,7 @@ struct FighterCardEditor: View {
     @State private var photoItem: PhotosPickerItem?
     @State private var stats = FighterCardStats()
     @State private var sharing = false
+    @State private var photoChanged = false
 
     private static let disciplines = ["Kickboxing", "Muay Thai", "MMA", "Boxing", "K-1", "Karate", "Taekwondo", "BJJ", "Wrestling"]
     private struct Country: Identifiable {
@@ -294,7 +295,7 @@ struct FighterCardEditor: View {
                     if photo != nil {
                         Button("Remove Photo", role: .destructive) {
                             photo = nil
-                            workoutStore.setFighterPhoto(nil, for: draft.id)
+                            photoChanged = true
                         }
                     }
                 }
@@ -370,11 +371,12 @@ struct FighterCardEditor: View {
                     Text("Live stats appear once FIGHT has enough sessions to rate you.")
                 }
             }
+            .interactiveDismissDisabled(hasChanges)
             .navigationTitle("Fighter Card")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    DiscardChangesButton(hasChanges: hasChanges) { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { save(); dismiss() }
@@ -396,8 +398,8 @@ struct FighterCardEditor: View {
             .onChange(of: photoItem) { _, item in
                 Task {
                     guard let item, let d = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: d) else { return }
-                    workoutStore.setFighterPhoto(img, for: draft.id)
-                    photo = workoutStore.fighterPhoto(for: draft.id)
+                    photo = img
+                    photoChanged = true
                 }
             }
             .onAppear {
@@ -421,7 +423,17 @@ struct FighterCardEditor: View {
         return draft.heightImperial ? "\(Int((r / HeightUnits.cmPerInch).rounded()))″" : "\(Int(r.rounded())) cm"
     }
 
+    private var hasChanges: Bool {
+        guard loaded else { return false }
+        let p = workoutStore.activeProfile
+        return photoChanged || draft.bio != p.bio || draft.name != p.name
+    }
+
     private func save() {
+        if photoChanged {
+            workoutStore.setFighterPhoto(photo, for: draft.id)
+            photoChanged = false
+        }
         var p = workoutStore.activeProfile
         let trimmed = draft.name.trimmingCharacters(in: .whitespaces)
         if !trimmed.isEmpty { p.name = trimmed }

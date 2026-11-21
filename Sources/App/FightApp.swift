@@ -7,6 +7,7 @@ struct FightApp: App {
     @StateObject private var healthKit = HealthKitManager()
     @StateObject private var navigation = AppNavigation()
     @StateObject private var session = WorkoutSession()
+    @StateObject private var undo = UndoCenter()
 
     var body: some Scene {
         WindowGroup {
@@ -28,6 +29,8 @@ struct FightApp: App {
                     .tag(AppNavigation.Tab.profile)
             }
             .modifier(FirstRunModifier())
+            .undoHost(bottomInset: 56)
+            .environmentObject(undo)
             .environmentObject(bleManager)
             .environmentObject(workoutStore)
             .environmentObject(healthKit)
