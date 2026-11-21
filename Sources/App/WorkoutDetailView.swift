@@ -51,6 +51,12 @@ struct WorkoutDetailView: View {
                 }
                 .frame(height: 120)
             }
+            let chin = workout.roundStats.compactMap(\.chinUpSeconds).reduce(0, +)
+            let bounces = workout.roundStats.compactMap(\.bounces).reduce(0, +)
+            if chin > 0 || bounces > 0 {
+                Text("Chin up: \(chin) s · Footwork bounces: \(bounces)")
+                    .font(.footnote.weight(.semibold))
+            }
             Text("Slips, rolls and pulls counted by your AirPods. If it drops in later rounds, you're getting tired and standing still in front of your opponent.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -67,6 +73,12 @@ struct WorkoutDetailView: View {
                     NewRecordsBanner(records: newRecords) { storyFocus = .record }
                 }
                 headerSummaryCard
+                if workout.roundsAutoDetected {
+                    Label("\(workout.roundStats.count) rounds found automatically from your heart rate", systemImage: "wand.and.stars")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 SessionRatingCard(workoutID: workout.id)
                 SessionTagsCard(workoutID: workout.id)
                 if !workout.blockResults.isEmpty {
@@ -100,6 +112,12 @@ struct WorkoutDetailView: View {
                     }
                     if let hm = workout.headMovesPerMinute {
                         headMovementCard(hm)
+                    }
+                    if let hits = workout.impactsCount, hits > 0 {
+                        Label(workout.strikesCuedCount > 0 ? "Bag hits heard: \(hits) (\(workout.strikesCuedCount) strikes called)" : "Bag hits heard: \(hits)",
+                              systemImage: "waveform")
+                            .font(.subheadline.weight(.semibold))
+                            .card()
                     }
                     calorieBreakdownCard
                     advancedMetricsGrid

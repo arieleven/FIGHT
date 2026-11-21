@@ -18,7 +18,7 @@ struct ImpactDetector {
         for i in 0..<count {
             frame.append(samples[i])
             if frame.count == frameLength {
-                hits += process()
+                hits += process(seconds: Double(frameLength) / sampleRate)
                 frame.removeAll(keepingCapacity: true)
             }
         }
@@ -32,9 +32,9 @@ struct ImpactDetector {
         }
     }
 
-    private mutating func process() -> Int {
+    private mutating func process(seconds: Double) -> Int {
         let rms = sqrt(Double(frame.reduce(0) { $0 + $1 * $1 }) / Double(frame.count))
-        sinceLastHit += 0.01
+        sinceLastHit += seconds
         let loud = rms > max(0.05, baseline * 5)
         if loud && armed && sinceLastHit >= 0.12 {
             sinceLastHit = 0

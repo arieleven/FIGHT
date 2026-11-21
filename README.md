@@ -46,7 +46,11 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 ## Features
 
 ### 👊 Simple by design
-- **Four tabs**: Train, Coach (with your fight camp inside it), History, You
+- **Four tabs**: Today, Progress (with your fight camp inside it), History, You
+- **Today answers the daily question**: train hard, go easy or rest, with the session ready to go, one insight and your goal (fight countdown, weight to go or fitness)
+- **One-minute setup**: name and body, discipline and fight format, your goal, then strap and AirPods
+- **Rounds found automatically** from your heart rate when you don't use the timer, and a short spoken debrief when you finish
+- **Gloves-on control**: End Round and Start Next Round on the lock screen, or nod on the stool to start the next round
 - **Starts the way you left it**: your last setup is remembered for each workout type, and the Start button says exactly what it will do
 - **Quick start**: Last workout, Coach's pick or a Plan, in one tap
 - **Coach answers first**: "Today: train hard / go easy / rest", then one button to load that session
@@ -106,7 +110,11 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Combo cost**: the bag coach logs every combination it calls, then measures the heart-rate price of each one. "Kicks cost you 2.1× the heart rate of punch combos"
 - **FIGHT Benchmark**: a fixed 5 × 3 min test to repeat every 4 weeks. Same work every time, so "9 BPM lower, recovery +11" is real progress
 - **What drives your performance**: finds your own patterns, such as sleep, HRV above baseline, back-to-back hard days and time of day, against your session scores and recovery
-- **Head movement**: AirPods count slips, rolls and pulls per round, so you can see if you stop moving your head when you get tired
+- **Head movement and defence**: AirPods count slips, rolls and pulls per round, find your *defensive redline* (the heart rate where your head movement collapses), warn "move your head" and "chin down" live, and track footwork bounce
+- **Reaction drill**: the coach calls slips, rolls and pulls; AirPods time each reaction and check you slipped the right way
+- **Bag hits**: the phone's microphone counts the strikes you land during bag work
+- **Sparring log**: tag partners and score each round to see who pushes you hardest and whether you lose rounds to fatigue or technique
+- **Sleep from Apple Health** feeds your morning check automatically
 - **Breathing trainer**: paced in-4, out-6 breathing with a live coherence meter from your strap, optional breathing tones on the stool, and a check of whether it actually improves your recovery
 - **Soreness map**: tap where it hurts in the morning check. The coach adjusts today's advice and spots patterns, like shin soreness after back-to-back kicking days
 - **Records and badges**: personal records (best recovery, most hard rounds, longest Zone 2, most strikes called) with a spoken alert the moment you beat your best recovery

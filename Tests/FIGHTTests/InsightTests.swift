@@ -318,3 +318,111 @@ final class FighterBioTests: XCTestCase {
         XCTAssertEqual(round.bio.record, "12-3-0")
     }
 }
+
+final class FrameworkTests: XCTestCase {
+
+    /// 1 Hz heart rate: warm-up, then work/rest blocks.
+    private func intervalSamples(rounds: Int, work: Int = 180, rest: Int = 60) -> [HeartRatePoint] {
+        var out: [HeartRatePoint] = []
+        var t = 0.0
+        var bpm = 100.0
+        func run(_ seconds: Int, to target: Double, tau: Double) {
+            for _ in 0..<seconds {
+                bpm += (target - bpm) / tau
+                out.append(HeartRatePoint(elapsedSeconds: t, bpm: Int(bpm.rounded())))
+                t += 1
+            }
+        }
+        run(300, to: 120, tau: 30)
+        for r in 0..<rounds {
+            run(work, to: 170 + Double(r) * 3, tau: 15)
+            run(rest, to: 110, tau: 25)
+        }
+        return out
+    }
+
+    func testAutoRoundsFindsWorkBlocks() {
+        let p = fighter()
+        let rounds = AutoRounds.detect(samples: intervalSamples(rounds: 4), profile: p)
+        XCTAssertEqual(rounds.count, 4)
+        XCTAssertTrue(rounds.allSatisfy { ($0.endElapsed - $0.startElapsed) > 120 })
+        XCTAssertNotNil(rounds.first?.stoolDropBPM)
+        XCTAssertGreaterThan(rounds.last!.avgBPM, rounds.first!.avgBPM)
+    }
+
+    func testAutoRoundsIgnoresSteadyRuns() {
+        let p = fighter()
+        let steady = (0..<1800).map { HeartRatePoint(elapsedSeconds: Double($0), bpm: 140 + ($0 % 7)) }
+        XCTAssertTrue(AutoRounds.detect(samples: steady, profile: p).isEmpty)
+    }
+
+    func testDefensiveRedline() throws {
+        let p = fighter()
+        var rs: [RoundStat] = []
+        for (i, (bpm, moves)) in [(150, 45), (155, 42), (160, 40), (165, 38), (172, 30), (178, 20), (182, 16), (185, 14), (188, 12)].enumerated() {
+            rs.append(RoundStat(roundNumber: i + 1, startElapsed: Double(i) * 240, endElapsed: Double(i) * 240 + 180,
+                                avgBPM: bpm, peakBPM: bpm + 5, stoolDropBPM: 25, headMoves: moves))
+        }
+        let r = try XCTUnwrap(DefensiveRedline.evaluate(workouts: [workout(p, daysAgo: 1, rounds: rs)], profileID: p.id))
+        XCTAssertGreaterThanOrEqual(r.redlineBPM, 172)
+        XCTAssertLessThanOrEqual(r.redlineBPM, 182)
+        XCTAssertGreaterThanOrEqual(r.dropPercent, 40)
+    }
+
+    func testSparringPartnerAndLostRounds() {
+        let p = fighter()
+        var a = workout(p, daysAgo: 2, rounds: rounds(4, first: 178, creep: 2))
+        a.partner = "Dani"; a.roundResults = ["W", "L", "L", "L"]
+        var b = workout(p, daysAgo: 5, rounds: rounds(4, first: 160, creep: 2))
+        b.partner = "Sam"; b.roundResults = ["W", "W", "W", "E"]
+        let insights = SparringInsights.analyze([a, b], profileID: p.id)
+        XCTAssertTrue(insights.contains { $0.title.contains("Dani") }, insights.map(\.title).joined(separator: ", "))
+        XCTAssertTrue(insights.contains { $0.title.contains("redline") })
+    }
+
+    func testNeglectedTechnique() {
+        let p = fighter()
+        var old = workout(p, daysAgo: 15)
+        old.focusTags = ["Defence", "Jab"]
+        var recent = workout(p, daysAgo: 1)
+        recent.focusTags = ["Jab"]
+        let n = SparringInsights.neglected([old, recent], profileID: p.id)
+        XCTAssertEqual(n?.tag, "Defence")
+        XCTAssertGreaterThanOrEqual(n?.days ?? 0, 14)
+    }
+
+    func testImpactDetectorCountsSharpHits() {
+        var d = ImpactDetector(sampleRate: 1000)
+        var samples = [Float](repeating: 0.002, count: 1000)
+        for hit in [100, 400, 420, 800] {          // 420 is too soon after 400: one hit
+            for k in 0..<10 { samples[hit + k] = k % 2 == 0 ? 0.6 : -0.6 }
+        }
+        XCTAssertEqual(d.feed(samples), 3)
+    }
+
+    func testNodDetector() {
+        var n = NodDetector()
+        XCTAssertFalse(n.feed(pitchRate: 2.5, otherRate: 0.2, ts: 10.0))
+        XCTAssertTrue(n.feed(pitchRate: -2.4, otherRate: 0.3, ts: 10.3), "down then up is a nod")
+        XCTAssertFalse(n.feed(pitchRate: 2.5, otherRate: 0.2, ts: 10.6))
+        XCTAssertFalse(n.feed(pitchRate: -2.5, otherRate: 0.2, ts: 10.9), "too soon after the last nod")
+        XCTAssertFalse(n.feed(pitchRate: 2.5, otherRate: 2.4, ts: 20.0), "a slip isn't a nod")
+    }
+
+    func testSleepAndDailyInsight() {
+        XCTAssertEqual(SleepScore.quality(hours: 8.2), 5)
+        XCTAssertEqual(SleepScore.quality(hours: 6.4), 3)
+        XCTAssertEqual(SleepScore.quality(hours: 4), 1)
+        let day = Date()
+        XCTAssertEqual(DailyInsight.pick(["a", "b", "c"], date: day), DailyInsight.pick(["a", "b", "c"], date: day))
+        XCTAssertNotEqual(DailyInsight.pick(["a", "b"], date: day), DailyInsight.pick(["a", "b"], date: day.addingTimeInterval(86400)))
+        XCTAssertNil(DailyInsight.pick([]))
+    }
+
+    func testDebriefMentionsHardestRound() {
+        let p = fighter()
+        let w = workout(p, daysAgo: 0, rounds: rounds(4, first: 160, creep: 5))
+        let text = SessionDebrief.text(for: w, history: [w], profile: p)
+        XCTAssertTrue(text.contains("Round 4 was your hardest"), text)
+    }
+}
