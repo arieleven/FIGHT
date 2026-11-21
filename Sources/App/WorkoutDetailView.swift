@@ -788,7 +788,7 @@ struct SessionRatingCard: View {
             } else {
                 Text("How hard was that?")
                     .font(.headline)
-                Text(w.hasHeartRate
+                Text(workout?.hasHeartRate != false
                      ? "Your rating makes training load more accurate. Heart rate alone under-reads sparring, clinch and strength work."
                      : "No heart rate was recorded, so your rating is how the coach counts this session.")
                     .font(.caption)
