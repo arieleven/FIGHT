@@ -12,11 +12,11 @@ struct FightApp: App {
         WindowGroup {
             TabView(selection: $navigation.selectedTab) {
                 LiveWorkoutView()
-                    .tabItem { Label("Train", systemImage: "heart.fill") }
+                    .tabItem { Label("Today", systemImage: "heart.fill") }
                     .tag(AppNavigation.Tab.live)
 
                 CoachView()
-                    .tabItem { Label("Coach", systemImage: "gauge.with.dots.needle.67percent") }
+                    .tabItem { Label("Progress", systemImage: "chart.line.uptrend.xyaxis") }
                     .tag(AppNavigation.Tab.coach)
 
                 HistoryListView()
@@ -35,6 +35,12 @@ struct FightApp: App {
             .environmentObject(session)
             .task {
                 AppNavigation.shared = navigation
+                LiveActivityActions.handler = { [weak s = session] action in
+                    guard let s else { return }
+                    if action == "endRound" { s.endWorkPhase(manual: true) }
+                    if action == "skipRest" { s.skipRest() }
+                }
+                WeeklyNudge.install()
                 session.bind(ble: bleManager, store: workoutStore, health: healthKit)
             }
             .onOpenURL { url in

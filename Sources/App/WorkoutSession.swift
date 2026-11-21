@@ -396,6 +396,21 @@ final class WorkoutSession: ObservableObject {
         }
     }
 
+    /// First-run setup: default workout type and round length for this fighter.
+    func applyFirstSetup(discipline: String, roundMinutes: Int) {
+        guard !isRecording else { return }
+        let category: WorkoutCategory
+        switch discipline {
+        case "Muay Thai": category = .muayThai
+        case "Boxing": category = .heavyBag
+        case "BJJ", "Wrestling": category = .bjj
+        default: category = .kickboxing
+        }
+        apply(WorkoutSetup(category: category, drill: .technical, roundTimer: true,
+                           workSeconds: roundMinutes * 60, restSeconds: 60, bag: false))
+        rememberSetup()
+    }
+
     /// One line describing what Start will do, e.g. "Muay Thai · 5 × 3:00 · Bag Coach".
     var setupSummary: String {
         if let plan = queuedPlan { return plan.title }
@@ -728,11 +743,19 @@ final class WorkoutSession: ObservableObject {
         if profile.trackHeadMovement {
             headMotion.start()
             headMotion.trackingChin = roundTimerEnabled
-            headMotion.onNod = profile.nodToStart ? { [weak self] in self?.handleNod() } : nil
+            if profile.nodToStart {
+                headMotion.onNod = { [weak self] in self?.handleNod() }
+            } else {
+                headMotion.onNod = nil
+            }
         }
         let countHits = profile.countBagHits && bagEnabled
         audio.countBagHits = countHits
-        audio.onBagHit = countHits ? { [weak self] in self?.bagHits += 1 } : nil
+        if countHits {
+            audio.onBagHit = { [weak self] in self?.bagHits += 1 }
+        } else {
+            audio.onBagHit = nil
+        }
         runningPlan = queuedPlan
         queuedPlan = nil
         planBlockIndex = 0

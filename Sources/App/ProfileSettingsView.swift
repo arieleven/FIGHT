@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct ProfileSettingsView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
@@ -44,6 +45,12 @@ struct ProfileSettingsView: View {
                         showingNewProfileAlert = true
                     } label: {
                         Label("Add Another Person / Sparring Partner", systemImage: "person.badge.plus")
+                    }
+
+                    Button {
+                        navigation.requestSetup = true
+                    } label: {
+                        Label("Run Setup Again", systemImage: "wand.and.stars")
                     }
 
                     Button {
@@ -284,11 +291,24 @@ struct ProfileSettingsView: View {
 
                 Section {
                     Toggle("Count head movement (AirPods)", isOn: binding(for: \.trackHeadMovement))
+                    if profile.trackHeadMovement {
+                        Toggle("\"Move your head\" and \"chin down\" cues", isOn: binding(for: \.headCues))
+                        Toggle("Nod to start the next round", isOn: binding(for: \.nodToStart))
+                    }
+                    Toggle("Count bag hits (microphone)", isOn: Binding(
+                        get: { profile.countBagHits },
+                        set: { on in
+                            var p = workoutStore.activeProfile
+                            p.countBagHits = on
+                            workoutStore.activeProfile = p
+                            if on { AVAudioApplication.requestRecordPermission { _ in } }
+                        }
+                    ))
                     Toggle("Breathing tones between rounds", isOn: binding(for: \.guidedBreathing))
                 } header: {
                     Text("Sensors & Recovery")
                 } footer: {
-                    Text("Head movement works with AirPods Pro, AirPods (3rd gen and later) and AirPods Max. Breathing tones guide a slow in-4, out-6 breath on the stool.")
+                    Text("Head movement, chin and footwork work with AirPods Pro, AirPods (3rd gen and later) and AirPods Max. Bag hits use the phone's microphone during bag-coach sessions: keep the phone near the bag. Audio is never recorded.")
                 }
 
                 Section("Storage") {

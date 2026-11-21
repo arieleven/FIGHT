@@ -14,6 +14,10 @@ struct CoachInsights {
     var benchmarkAttempts: [Benchmark.Attempt] = []
     var benchmarkDue = false
     var breathing: (with: Double, without: Double, sessions: Int)?
+    var redline: DefensiveRedline?
+    var sparring: [DriverInsight] = []
+    var neglected: (tag: String, days: Int)?
+    var drills: [DrillResult] = []
 
     @MainActor
     static func build(store: WorkoutStore) -> CoachInsights {
@@ -29,7 +33,24 @@ struct CoachInsights {
         i.benchmarkAttempts = Benchmark.attempts(mine)
         i.benchmarkDue = Benchmark.isDue(mine)
         i.breathing = BreathingEffect.compare(mine, profileID: profile.id)
+        i.redline = DefensiveRedline.evaluate(workouts: mine, profileID: profile.id)
+        i.sparring = SparringInsights.analyze(mine, profileID: profile.id)
+        i.neglected = SparringInsights.neglected(mine, profileID: profile.id)
+        i.drills = DrillHistory.load(profile.id)
         return i
+    }
+
+    /// Short lines for Today's "one insight a day".
+    var dailyCandidates: [String] {
+        var c: [String] = []
+        if let r = redline { c.append("\(r.headline). Conditioning keeps your defence alive.") }
+        if let g = gasTank, g.intenseEnough { c.append("Gas tank: \(g.headline).") }
+        if let h = comboCost?.headline { c.append(h + ".") }
+        c.append(contentsOf: drivers.prefix(2).map(\.detail))
+        c.append(contentsOf: sparring.prefix(1).map(\.detail))
+        if let n = neglected { c.append("You haven't drilled \(n.tag.lowercased()) in \(n.days) days.") }
+        if let best = drills.map(\.averageMs).min() { c.append("Your fastest defensive reaction: \(best) ms. Try to beat it.") }
+        return c
     }
 
     /// Tips that should jump the queue (an injury risk beats everything).
@@ -42,6 +63,10 @@ struct CoachInsights {
         var tips: [CoachRecommendation] = []
         if let d = drivers.first {
             tips.append(CoachRecommendation(kind: .focus, title: d.title, detail: d.detail))
+        }
+        if let n = neglected {
+            tips.append(CoachRecommendation(kind: .focus, title: "Time to drill \(n.tag.lowercased())",
+                                            detail: "You haven't worked on \(n.tag.lowercased()) in \(n.days) days. Tag it after your next session."))
         }
         if benchmarkDue {
             let detail = benchmarkAttempts.isEmpty
@@ -680,4 +705,47 @@ struct CampCompareCard: View {
 struct ShareableImage: Identifiable {
     let id = UUID()
     let image: UIImage
+}
+
+
+/// Defence: the heart rate where head movement collapses, and reaction-drill progress.
+struct DefenceCard: View {
+    let redline: DefensiveRedline?
+    let drills: [DrillResult]
+    @State private var showingDrill = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Defence", systemImage: "airpodspro")
+                .font(.title3.weight(.bold))
+            if let r = redline {
+                Text(r.headline).font(.subheadline.weight(.semibold))
+                Text(String(format: "Fresh you moves your head %.0f times a minute; above %d BPM it's %.0f. That's when you get hit. Conditioning and staying relaxed push this number up.",
+                            r.freshPerMinute, r.redlineBPM, r.tiredPerMinute))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Wear AirPods during rounds and FIGHT finds the heart rate where your head movement drops off.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            Divider()
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Reaction drill").font(.subheadline.weight(.semibold))
+                    if let last = drills.last, let best = drills.map(\.averageMs).min() {
+                        Text("Last \(last.averageMs) ms · best \(best) ms").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("How fast do you slip a punch?").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Button("Start") { showingDrill = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.teal)
+            }
+        }
+        .card()
+        .sheet(isPresented: $showingDrill) { ReactionDrillView() }
+    }
 }

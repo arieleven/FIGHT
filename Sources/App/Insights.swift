@@ -39,9 +39,14 @@ struct GasTankResult {
     let firstRoundBPM: Int
     let redlineBPM: Int
     let intenseEnough: Bool
+    /// The format the fighter trains for (from setup).
+    var target: FightFormat?
 
     var headline: String {
         guard intenseEnough else { return "Train some rounds at fight pace to measure" }
+        if let t = target, let f = formats.first(where: { $0.format == t }) {
+            return f.isReady ? "Ready for \(t.label)" : "\(t.label): \(f.percent)%, limit round \(f.limitRound ?? t.rounds)"
+        }
         if let best = formats.last(where: \.isReady) {
             return "Ready for \(best.format.label)"
         }
@@ -95,7 +100,9 @@ enum GasTank {
         let fade = median(fades).map { min(0, $0) }
         let intense = first >= Double(zones.z2Max)
 
-        let formats = FightFormat.common.map { format -> GasTankResult.FormatReadiness in
+        var all = FightFormat.common
+        if !all.contains(profile.fightFormat) { all.append(profile.fightFormat) }
+        let formats = all.map { format -> GasTankResult.FormatReadiness in
             // Longer rounds creep more; scale the per-round creep by duration.
             let durationFactor = sqrt(Double(format.minutes * 60) / max(60, work))
             var limit: Int?
@@ -116,7 +123,8 @@ enum GasTank {
 
         return GasTankResult(
             formats: formats, sessionsUsed: slopes.count, creepPerRound: slope,
-            firstRoundBPM: Int(first.rounded()), redlineBPM: Int(redline.rounded()), intenseEnough: intense
+            firstRoundBPM: Int(first.rounded()), redlineBPM: Int(redline.rounded()), intenseEnough: intense,
+            target: profile.fightFormat
         )
     }
 }

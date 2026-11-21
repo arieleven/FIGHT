@@ -13,6 +13,10 @@ final class AppNavigation: ObservableObject {
     @Published var selectedTab: Tab = .live
     /// Set by the "Readiness check" shortcut; the Coach tab opens the check.
     @Published var requestReadinessCheck = false
+    /// Set by "Run setup again" in You.
+    @Published var requestSetup = false
+    /// A story card to open on the Progress tab (from the weekly notification).
+    @Published var storyToOpen: StoryCardKind?
     @Published var pendingPrescription: WorkoutPrescription?
 
     /// A plan opened from a file, link or QR code, waiting for the import preview.

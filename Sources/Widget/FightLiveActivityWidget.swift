@@ -12,6 +12,7 @@ struct FightLiveActivityBundle: WidgetBundle {
 struct FightLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: WorkoutActivityAttributes.self) { context in
+            VStack(spacing: 10) {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 6) {
@@ -63,6 +64,10 @@ struct FightLiveActivityWidget: Widget {
                         .foregroundStyle(.secondary)
                 }
             }
+            if context.state.isTimedRound {
+                roundButton(isRest: context.state.isRest)
+            }
+            }
             .padding()
             .activityBackgroundTint(Color.black.opacity(0.85))
             .activitySystemActionForegroundColor(.white)
@@ -95,6 +100,9 @@ struct FightLiveActivityWidget: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
+                    if context.state.isTimedRound {
+                        roundButton(isRest: context.state.isRest)
+                    }
                     Text("\(context.attributes.athleteName) • \(context.attributes.discipline) • \(context.state.calories) kcal")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -123,6 +131,17 @@ struct FightLiveActivityWidget: Widget {
                     .foregroundStyle(zoneColor(context.state.zoneNumber))
             }
         }
+    }
+
+    /// Gloves-on control: end the round, or start the next one early.
+    private func roundButton(isRest: Bool) -> some View {
+        Button(intent: RoundActionIntent(action: isRest ? "skipRest" : "endRound")) {
+            Label(isRest ? "Start Next Round" : "End Round", systemImage: isRest ? "play.fill" : "bell.fill")
+                .font(.subheadline.weight(.bold))
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(isRest ? .cyan : .orange)
     }
 
     private func zoneColor(_ zone: Int) -> Color {

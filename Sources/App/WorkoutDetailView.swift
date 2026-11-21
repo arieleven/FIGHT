@@ -68,6 +68,7 @@ struct WorkoutDetailView: View {
                 }
                 headerSummaryCard
                 SessionRatingCard(workoutID: workout.id)
+                SessionTagsCard(workoutID: workout.id)
                 if !workout.blockResults.isEmpty {
                     PlanResultsCard(workoutID: workout.id)
                 }

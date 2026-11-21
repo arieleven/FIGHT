@@ -43,7 +43,8 @@ private func fighter() -> AthleteProfile {
 final class GasTankTests: XCTestCase {
 
     func testFlatHeartRateIsReadyForEveryFormat() throws {
-        let p = fighter()
+        var p = fighter()
+        p.formatRounds = 5
         let ws = (0..<3).map { workout(p, daysAgo: Double($0 * 3 + 1), rounds: rounds(5, first: 160, creep: 1)) }
         let r = try XCTUnwrap(GasTank.evaluate(workouts: ws, profile: p))
         XCTAssertTrue(r.formats.allSatisfy(\.isReady), "\(r.formats.map(\.percent))")

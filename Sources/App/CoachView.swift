@@ -27,7 +27,7 @@ struct CoachView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            .navigationTitle("Coach")
+            .navigationTitle("Progress")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -61,6 +61,11 @@ struct CoachView: View {
                 consumeReadinessRequest()
             }
             .onChange(of: navigation.requestReadinessCheck) { _, _ in consumeReadinessRequest() }
+            .onChange(of: navigation.storyToOpen) { _, kind in
+                guard let kind else { return }
+                storyFocus = kind
+                navigation.storyToOpen = nil
+            }
             .onChange(of: workoutStore.workouts.count) { _, _ in refresh() }
             .onChange(of: workoutStore.readinessReadings.count) { _, _ in refresh() }
             .onChange(of: workoutStore.soreness.count) { _, _ in refresh() }
@@ -90,8 +95,6 @@ struct CoachView: View {
     private func content(_ report: CoachReport) -> some View {
         ScrollView {
             VStack(spacing: 16) {
-                readinessCard(report)
-                nextWorkoutCard(report.nextWorkout)
                 plansEntryCard
 
                 if let plan = CampPlanner.buildPlan(profile: workoutStore.activeProfile, workouts: workoutStore.workouts),
@@ -140,7 +143,8 @@ struct CoachView: View {
                     recommendationsSection([tip], title: "Coach's Tip")
                 }
 
-                AdvancedSection("Performance details", subtitle: "Ratings, gas tank, combo cost, benchmark, what drives you", key: "coach.details") {
+                AdvancedSection("Performance details", subtitle: "Readiness, ratings, gas tank, defence, combo cost, benchmark", key: "coach.details") {
+                    readinessCard(report)
                     if report.hasEnoughData {
                         fightFitnessSection(report)
                         loadChartCard(report)
@@ -150,6 +154,7 @@ struct CoachView: View {
                         navigation.run(PlanTemplates.benchmark)
                     }
                     if let c = insights.comboCost { ComboCostCard(result: c) }
+                    DefenceCard(redline: insights.redline, drills: insights.drills)
                     driversSection
                     if tips.count > 1 {
                         recommendationsSection(Array(tips.dropFirst()), title: "More Notes")
@@ -352,7 +357,7 @@ struct CoachView: View {
 
     @ViewBuilder
     private var driversSection: some View {
-        let drivers = insights.drivers + insights.sorenessPatterns
+        let drivers = insights.drivers + insights.sparring + insights.sorenessPatterns
         if !drivers.isEmpty {
             DriversCard(title: "What Drives Your Performance", insights: drivers)
         }

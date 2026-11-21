@@ -108,6 +108,10 @@ struct LiveWorkoutView: View {
                                 .textFieldStyle(.roundedBorder)
                         }
                     } else {
+                        AutoStartBanner()
+
+                        TodayCard()
+
                         heroBPMCard(currentZone: currentZone, profile: profile)
 
                         quickStartRow
@@ -119,7 +123,7 @@ struct LiveWorkoutView: View {
                 }
                 .padding()
             }
-            .navigationTitle("Live Corner")
+            .navigationTitle("Today")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {

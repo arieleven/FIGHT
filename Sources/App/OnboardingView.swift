@@ -1,122 +1,256 @@
 import SwiftUI
 
-/// First launch: three quick screens instead of a long profile form.
+/// First-run setup: one minute, five screens, big buttons. Everything after this is personalised.
 struct OnboardingView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var bleManager: BLEHeartRateManager
+    @EnvironmentObject var session: WorkoutSession
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("fight.onboarded") private var onboarded = false
 
     @State private var page = 0
-    @State private var name = ""
-    @State private var age = 25
+    @State private var draft = AthleteProfile()
     @State private var weightText = ""
+    @State private var targetText = ""
+    @State private var fightDate = Date().addingTimeInterval(56 * 86400)
     @State private var showingScanner = false
+    @StateObject private var airPods = HeadMotionTracker()
+
+    private let pages = 5
+    private static let disciplines = ["Muay Thai", "Kickboxing", "MMA", "Boxing", "K-1", "BJJ"]
+    private static let formats = [FightFormat(rounds: 3, minutes: 2), FightFormat(rounds: 3, minutes: 3), FightFormat(rounds: 5, minutes: 3)]
 
     var body: some View {
         VStack(spacing: 0) {
+            ProgressView(value: Double(page + 1), total: Double(pages))
+                .tint(.red)
+                .padding(.horizontal)
+                .padding(.top, 12)
             TabView(selection: $page) {
                 aboutYou.tag(0)
-                strap.tag(1)
-                ready.tag(2)
+                discipline.tag(1)
+                goal.tag(2)
+                sensors.tag(3)
+                ready.tag(4)
             }
-            .tabViewStyle(.page(indexDisplayMode: .always))
-            .indexViewStyle(.page(backgroundDisplayMode: .always))
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .animation(.snappy, value: page)
 
-            Button {
-                advance()
-            } label: {
-                Text(page == 2 ? "Start Training" : "Continue")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+            HStack {
+                if page > 0 {
+                    Button("Back") { page -= 1 }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                }
+                Button {
+                    advance()
+                } label: {
+                    Text(page == pages - 1 ? "Start Training" : "Continue")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(.red)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .tint(.red)
             .padding()
         }
         .sheet(isPresented: $showingScanner) {
-            DeviceScannerSheet()
-                .presentationDetents([.medium, .large])
+            DeviceScannerSheet().presentationDetents([.medium, .large])
         }
         .onAppear {
-            let p = workoutStore.activeProfile
-            name = p.name == "Fighter" ? "" : p.name
-            age = p.age
-            weightText = WeightUnits.number(p.weightKg, p.useImperial)
+            draft = workoutStore.activeProfile
+            if draft.name == "Fighter" { draft.name = "" }
+            weightText = WeightUnits.number(draft.weightKg, draft.useImperial)
+            targetText = WeightUnits.number(draft.targetFightWeightKg, draft.useImperial)
+            if let d = draft.fightDate, d > Date() { fightDate = d }
         }
+        .onChange(of: page) { _, p in
+            if p == 3 { airPods.start() } else { airPods.stop() }
+        }
+        .onDisappear { airPods.stop() }
         .interactiveDismissDisabled()
     }
 
+    // MARK: Pages
+
+    private func header(_ title: String, _ sub: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.largeTitle.weight(.heavy))
+            Text(sub).font(.subheadline).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func field<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(12)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+
     private var aboutYou: some View {
-        Form {
-            Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("FIGHT").font(.system(size: 34, weight: .black, design: .rounded)).foregroundStyle(.red)
-                    Text("Train with data. Tell us a little about you.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("FIGHT").font(.system(size: 30, weight: .black, design: .rounded)).foregroundStyle(.red)
+                header("Hi, fighter", "Four quick questions so FIGHT can set your heart-rate zones.")
+                field {
+                    TextField("Your name", text: $draft.name)
+                        .textContentType(.givenName)
+                        .font(.title3)
                 }
-                .listRowBackground(Color.clear)
-            }
-            Section {
-                TextField("Your name", text: $name)
-                    .textContentType(.givenName)
-                Stepper("Age: \(age)", value: $age, in: 13...85)
-                HStack {
-                    Text("Weight")
-                    Spacer()
-                    TextField("Weight", text: $weightText)
-                        .keyboardType(.decimalPad)
-                        .multilineTextAlignment(.trailing)
-                        .frame(maxWidth: 90)
-                    WeightUnitChip(text: $weightText)
+                field {
+                    Stepper("Age: \(draft.age)", value: $draft.age, in: 13...85)
                 }
-            } footer: {
-                Text("Used for heart-rate zones and calories. You can change it any time in You.")
+                field {
+                    HStack {
+                        Text("Weight")
+                        Spacer()
+                        TextField("Weight", text: $weightText)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 90)
+                        WeightUnitChip(text: $weightText)
+                    }
+                }
+                field {
+                    HStack {
+                        Text("Height")
+                        Spacer()
+                        Stepper(HeightUnits.text(draft.heightCm, draft.heightImperial), value: $draft.heightCm, in: 120...230,
+                                step: draft.heightImperial ? HeightUnits.cmPerInch : 1)
+                            .fixedSize()
+                        UnitChip(metric: "cm", imperial: "ft", isImperial: $draft.heightImperial, accessibilityName: "Height unit")
+                    }
+                }
             }
+            .padding(24)
         }
     }
 
-    private var strap: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: bleManager.isConnected ? "checkmark.circle.fill" : "antenna.radiowaves.left.and.right")
-                .font(.system(size: 64))
-                .foregroundStyle(bleManager.isConnected ? .green : .red)
-            Text(bleManager.isConnected ? "Connected to \(bleManager.connectedDeviceName)" : "Connect your heart-rate strap")
-                .font(.title2.weight(.bold))
-                .multilineTextAlignment(.center)
-            Text("Any Bluetooth chest strap, armband or watch in broadcast mode works. Put it on and wet the sensor.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            if !bleManager.isConnected {
-                Button("Find My Strap") { showingScanner = true }
-                    .buttonStyle(.bordered)
-                    .controlSize(.large)
-                Text("No strap yet? Skip this. You can still time rounds and use the bag coach.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+    private var discipline: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header("What do you fight?", "This sets your weight classes, round length and combos.")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForEach(Self.disciplines, id: \.self) { d in
+                        bigChoice(d, selected: draft.bio.discipline == d) { draft.bio.discipline = d }
+                    }
+                }
+                Text("Your fight format").font(.headline).padding(.top, 6)
+                HStack(spacing: 10) {
+                    ForEach(Self.formats) { f in
+                        bigChoice(f.label, selected: draft.formatRounds == f.rounds && draft.formatMinutes == f.minutes) {
+                            draft.formatRounds = f.rounds
+                            draft.formatMinutes = f.minutes
+                        }
+                    }
+                }
+                Text("Rounds × minutes. Your Gas Tank is measured against it.").font(.caption).foregroundStyle(.secondary)
             }
-            Spacer()
+            .padding(24)
         }
-        .padding(32)
+    }
+
+    private var goal: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                header("What's the goal?", "Today will lead with what matters most to you.")
+                ForEach(FighterGoal.allCases) { g in
+                    Button {
+                        draft.goal = g
+                    } label: {
+                        Label(g.rawValue, systemImage: g.icon)
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(16)
+                            .background(draft.goal == g ? Color.red.opacity(0.18) : Color(.secondarySystemBackground),
+                                        in: RoundedRectangle(cornerRadius: 14))
+                            .foregroundStyle(draft.goal == g ? Color.red : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                if draft.goal == .fight {
+                    field {
+                        DatePicker("Fight date", selection: $fightDate, in: Date()..., displayedComponents: .date)
+                    }
+                }
+                if draft.goal != .fitter {
+                    field {
+                        HStack {
+                            Text("Target weight")
+                            Spacer()
+                            TextField("Target", text: $targetText)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(maxWidth: 90)
+                            Text(WeightUnits.unit(workoutStore.activeProfile.useImperial)).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(24)
+        }
+    }
+
+    private var sensors: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                header("Your gear", "Both are optional. You can connect later.")
+                sensorRow(icon: "heart.fill", title: "Heart-rate strap",
+                          detail: bleManager.isConnected ? "Connected: \(bleManager.connectedDeviceName)" : "Put it on and wet the sensor",
+                          ok: bleManager.isConnected, showFind: !bleManager.isConnected)
+                sensorRow(icon: "airpodspro", title: "AirPods",
+                          detail: airPods.isReceiving ? "Working. Move your head: \(airPods.totalMoves) moves" : "Put them in to track head movement and your chin",
+                          ok: airPods.isReceiving, showFind: false)
+                Text("No strap? You can still time rounds and use the bag coach.").font(.caption).foregroundStyle(.secondary)
+            }
+            .padding(24)
+        }
     }
 
     private var ready: some View {
         VStack(alignment: .leading, spacing: 22) {
             Spacer()
-            Text("You're ready").font(.largeTitle.weight(.heavy))
-            tip("heart.fill", "Train", "Press Start. FIGHT remembers your setup for next time.")
-            tip("gauge.with.dots.needle.67percent", "Coach", "Tells you each day whether to train hard, go easy or rest. It gets smarter with every session.")
-            tip("calendar.badge.clock", "Got a fight?", "Set the date in Coach for a camp plan and weight cut.")
-            tip("square.and.arrow.up", "Share", "Post your progress straight to your Instagram story.")
+            header("You're set, \(draft.name.isEmpty ? "fighter" : draft.name)", "Here's how FIGHT works:")
+            tip("sun.max.fill", "Today", "Tells you to train hard, go easy or rest, and has your session ready. Press Start.")
+            tip("chart.line.uptrend.xyaxis", "Progress", "Your fitness, gas tank, defence and fight camp.")
+            tip("waveform.path.ecg", "Just train", "Rounds, recovery and head movement are tracked automatically.")
             Spacer()
         }
-        .padding(32)
+        .padding(24)
+    }
+
+    private func bigChoice(_ title: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.headline)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(selected ? Color.red.opacity(0.18) : Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                .foregroundStyle(selected ? Color.red : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func sensorRow(icon: String, title: String, detail: String, ok: Bool, showFind: Bool) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: ok ? "checkmark.circle.fill" : icon)
+                .font(.title2)
+                .foregroundStyle(ok ? Color.green : Color.red)
+                .frame(width: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if showFind {
+                Button("Find") { showingScanner = true }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+            }
+        }
+        .padding(14)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func tip(_ icon: String, _ title: String, _ text: String) -> some View {
@@ -129,35 +263,45 @@ struct OnboardingView: View {
         }
     }
 
-    private func advance() {
-        if page == 0 { saveProfile() }
-        if page < 2 {
-            withAnimation { page += 1 }
-        } else {
-            onboarded = true
-            dismiss()
-        }
-    }
+    // MARK: Save
 
-    private func saveProfile() {
+    private func advance() {
+        if page < pages - 1 {
+            page += 1
+            return
+        }
         var p = workoutStore.activeProfile
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty { p.name = trimmed }
-        p.age = age
-        if let raw = Double(weightText.replacingOccurrences(of: ",", with: ".")) {
-            let kg = WeightUnits.toKg(raw, p.useImperial)
+        let name = draft.name.trimmingCharacters(in: .whitespaces)
+        if !name.isEmpty { p.name = name }
+        p.age = draft.age
+        p.heightCm = draft.heightCm
+        p.heightImperial = draft.heightImperial
+        if let w = Double(weightText.replacingOccurrences(of: ",", with: ".")) {
+            let kg = WeightUnits.toKg(w, p.useImperial)
             if (35...200).contains(kg) { p.weightKg = kg }
         }
+        if draft.goal != .fitter, let t = Double(targetText.replacingOccurrences(of: ",", with: ".")) {
+            let kg = WeightUnits.toKg(t, p.useImperial)
+            if (35...200).contains(kg) { p.targetFightWeightKg = kg }
+        }
+        p.bio.discipline = draft.bio.discipline
+        p.formatRounds = draft.formatRounds
+        p.formatMinutes = draft.formatMinutes
+        p.goal = draft.goal
+        if draft.goal == .fight { p.fightDate = fightDate }
+        p.setupDone = true
         p.sanitize()
         workoutStore.activeProfile = p
+        session.applyFirstSetup(discipline: p.bio.discipline, roundMinutes: p.formatMinutes)
+        dismiss()
     }
 }
 
-/// Shows onboarding on a true first launch, and offers the morning readiness check once a day before noon.
+/// Shows setup for any fighter who hasn't done it and has no sessions yet,
+/// and offers the morning readiness check once a day before noon.
 struct FirstRunModifier: ViewModifier {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var navigation: AppNavigation
-    @AppStorage("fight.onboarded") private var onboarded = false
     @AppStorage("fight.morningOffered") private var morningOffered = ""
     @State private var showingOnboarding = false
     @State private var offerMorningCheck = false
@@ -174,21 +318,29 @@ struct FirstRunModifier: ViewModifier {
                 }
                 Button("Not Today", role: .cancel) {}
             } message: {
-                Text("Take the 2-minute readiness check so your coach can plan today.")
+                Text("Take the 2-minute readiness check so FIGHT can plan today.")
             }
             .task {
                 try? await Task.sleep(nanoseconds: 600_000_000)
-                if !onboarded {
-                    let fresh = workoutStore.workouts.isEmpty && workoutStore.profiles.count == 1
-                        && workoutStore.activeProfile.name == "Fighter"
-                    if fresh {
-                        showingOnboarding = true
-                        return
-                    }
-                    onboarded = true
+                if needsSetup {
+                    showingOnboarding = true
+                } else {
+                    offerMorningCheckIfNeeded()
                 }
-                offerMorningCheckIfNeeded()
             }
+            .onChange(of: workoutStore.activeProfileID) { _, _ in
+                if needsSetup { showingOnboarding = true }
+            }
+            .onChange(of: navigation.requestSetup) { _, want in
+                guard want else { return }
+                navigation.requestSetup = false
+                showingOnboarding = true
+            }
+    }
+
+    private var needsSetup: Bool {
+        let p = workoutStore.activeProfile
+        return !p.setupDone && !workoutStore.workouts.contains { $0.profileID == p.id }
     }
 
     private func offerMorningCheckIfNeeded() {
