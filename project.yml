@@ -74,6 +74,7 @@ targets:
       - path: Sources/App/ImpactDetector.swift
       - path: Sources/App/Plyo.swift
       - path: Sources/App/Encouragement.swift
+      - path: Sources/App/RouteMath.swift
       - path: Sources/PlanKit
     settings:
       base:

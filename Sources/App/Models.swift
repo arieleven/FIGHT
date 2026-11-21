@@ -924,6 +924,8 @@ struct SavedWorkout: Codable, Identifiable {
     var deletedAt: Date?
     /// Jump heights measured by AirPods (cm).
     var jumps: [Double] = []
+    /// GPS run: distance, splits, moving time (the route lives in its own file).
+    var run: RunSummary?
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -936,7 +938,7 @@ struct SavedWorkout: Codable, Identifiable {
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
         case trainingPlanID, trainingPlanTitle, blockResults
         case comboEvents, headMovesPerMinute, breathingGuided
-        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt, jumps
+        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt, jumps, run
     }
 
     init(
@@ -1079,6 +1081,7 @@ struct SavedWorkout: Codable, Identifiable {
         impactsCount = (try? c.decodeIfPresent(Int.self, forKey: .impactsCount)) ?? nil
         deletedAt = (try? c.decodeIfPresent(Date.self, forKey: .deletedAt)) ?? nil
         jumps = (try? c.decodeIfPresent([Double].self, forKey: .jumps)) ?? []
+        run = (try? c.decodeIfPresent(RunSummary.self, forKey: .run)) ?? nil
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

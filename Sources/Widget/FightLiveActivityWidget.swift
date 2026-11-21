@@ -41,7 +41,13 @@ struct FightLiveActivityWidget: Widget {
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 4) {
-                    if context.state.isTimedRound {
+                    if let distance = context.state.distanceText {
+                        Text(distance)
+                            .font(.system(size: 28, weight: .heavy, design: .rounded).monospacedDigit())
+                        Text(context.state.paceText ?? "")
+                            .font(.caption.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.orange)
+                    } else if context.state.isTimedRound {
                         Text("R\(context.state.roundNumber) • \(context.state.isRest ? "REST" : "WORK")")
                             .font(.caption.weight(.heavy))
                             .foregroundStyle(context.state.isRest ? .cyan : .orange)
@@ -86,7 +92,12 @@ struct FightLiveActivityWidget: Widget {
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    if context.state.isTimedRound {
+                    if let distance = context.state.distanceText {
+                        VStack(alignment: .trailing) {
+                            Text(distance).font(.headline.monospacedDigit())
+                            Text(context.state.paceText ?? "").font(.caption2.weight(.bold)).foregroundStyle(.orange)
+                        }
+                    } else if context.state.isTimedRound {
                         VStack(alignment: .trailing) {
                             Text("R\(context.state.roundNumber) \(context.state.isRest ? "REST" : "WORK")")
                                 .font(.caption2.weight(.bold))
@@ -115,7 +126,11 @@ struct FightLiveActivityWidget: Widget {
                         .font(.caption.weight(.bold).monospacedDigit())
                 }
             } compactTrailing: {
-                if context.state.isTimedRound {
+                if let distance = context.state.distanceText {
+                    Text(distance)
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .frame(maxWidth: 64)
+                } else if context.state.isTimedRound {
                     Text(timerInterval: Date.now...max(Date.now, context.state.phaseEndDate), countsDown: true)
                         .font(.caption.weight(.bold).monospacedDigit())
                         .foregroundStyle(context.state.isRest ? .cyan : .orange)

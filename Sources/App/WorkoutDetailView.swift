@@ -95,6 +95,9 @@ struct WorkoutDetailView: View {
                     NewRecordsBanner(records: newRecords) { storyFocus = .record }
                 }
                 headerSummaryCard
+                if let run = workout.run {
+                    RunSummarySection(workout: workout, run: run).card()
+                }
                 if workout.roundsAutoDetected {
                     Label("\(workout.roundStats.count) rounds found automatically from your heart rate", systemImage: "wand.and.stars")
                         .font(.footnote.weight(.semibold))
@@ -153,7 +156,7 @@ struct WorkoutDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    storyFocus = .mainEvent
+                    storyFocus = workout.run?.hasRoute == true ? .route : .mainEvent
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }

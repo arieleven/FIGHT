@@ -77,6 +77,15 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **30-minute LTHR field test** that sets your lactate-threshold zones automatically
 - **Corner coach** (on by default): pushes you when your heart rate or bag output drops below your own round-1 pace, tells you to breathe when you've been redlining for a minute or are still high early in the rest. At most one call every 45 seconds
 
+### 🏃 GPS runs (roadwork and walks)
+- **Big numbers while you run**: distance, current and average pace, moving time and heart rate. Distance and pace also on the Lock Screen and Dynamic Island
+- **Spoken splits** every km (or mile): "Kilometre 3. 5 12. Heart rate 148." Auto-pause when you stop, "Resumed" when you go
+- **Clean tracking**: poor fixes and GPS jumps are thrown out, the first settling seconds are ignored, elevation ignores altitude noise
+- **Best device wins**: a Bluetooth GPS receiver (Location and Navigation profile) is used first; MFi receivers such as Garmin GLO and Bad Elf feed iOS location and are labelled "External GPS"; a foot pod (Running Speed and Cadence) keeps distance and pace going when the GPS signal drops under trees or between buildings
+- **After the run**: map with the route coloured by pace, start and finish, splits with bars (fastest highlighted), elevation, Zone 2 share and heart-rate drift
+- **Apple Health**: distance and the route are saved with the workout, so the run shows on a map in Fitness (and syncs on to Strava from Health)
+- **Run stickers**: Route (your line over your own photo), Splits (km bars) and Roadwork (the fighter version with Zone 2 share)
+
 ### 🦘 Plyometrics and Mix
 - **Four fighter plyo sessions**:
   | Session | What it builds |
@@ -259,6 +268,9 @@ FIGHT/
     │   ├── InsightViews.swift          # Cards and sheets for the signature insights
     │   ├── HeadMotionTracker.swift     # AirPods head movement, chin, bounce, nods, jump height
     │   ├── Plyo.swift                  # Plyo sessions, Mix builder, plyo scheduling
+    │   ├── RouteMath.swift             # GPS filter, auto-pause, splits, route simplification, sensor parsing
+    │   ├── RunTracker.swift            # CoreLocation + Bluetooth GPS / foot pod run tracking
+    │   ├── RunViews.swift              # Live run numbers, run summary map and splits
     │   ├── TrainingViews.swift         # Plyo and Mix sheets, disciplines and gear choices
     │   ├── Encouragement.swift         # Corner-coach push / breathe logic
     │   ├── FightIntents.swift          # Siri and Shortcuts

@@ -90,7 +90,7 @@ struct PickedMovie: Transferable {
 // MARK: - Card data
 
 enum StoryCardKind: String, CaseIterable, Identifiable {
-    case mainEvent, rounds, tape, poster, overlay, profile, fighter, progress, record, countdown
+    case route, splits, roadwork, mainEvent, rounds, tape, poster, overlay, profile, fighter, progress, record, countdown
     var id: String { rawValue }
 
     var title: String {
@@ -105,8 +105,14 @@ enum StoryCardKind: String, CaseIterable, Identifiable {
         case .progress: return "Progress"
         case .record: return "Record"
         case .countdown: return "Countdown"
+        case .route: return "Route"
+        case .splits: return "Splits"
+        case .roadwork: return "Roadwork"
         }
     }
+
+    /// Stickers without a card behind them, made to sit on your own photo or video.
+    var isTransparent: Bool { self == .overlay || self == .route || self == .splits }
 }
 
 struct StoryPrivacy {
@@ -140,6 +146,7 @@ struct StoryData {
     var monthRounds = 0
     var monthMinutes = 0
     var recoveryChange: Int?
+    var route: [RoutePoint] = []
 
     @MainActor
     static func build(store: WorkoutStore, workout: SavedWorkout?) -> StoryData {
@@ -153,6 +160,7 @@ struct StoryData {
         d.gasTank = GasTank.evaluate(workouts: mine, profile: profile)?.headline
         if let workout {
             d.workout = workout
+            if workout.run != nil { d.route = store.loadRoute(for: workout.id) }
             let owner = store.profile(for: workout)
             d.name = owner.name
             d.workoutRecords = Records.newRecords(in: workout, workouts: store.workouts, profile: owner)
@@ -207,6 +215,11 @@ struct StoryData {
     /// Cards that have something worth sharing right now.
     var availableKinds: [StoryCardKind] {
         var k: [StoryCardKind] = []
+        if let run = workout?.run {
+            if route.count >= 2 { k.append(.route) }
+            if run.splits.count >= 2 { k.append(.splits) }
+            k.append(.roadwork)
+        }
         if let w = workout {
             k.append(.mainEvent)
             if w.roundStats.count >= 2 { k.append(.rounds) }
@@ -380,8 +393,8 @@ struct StoryCard: View {
     var body: some View {
         content
             .frame(width: 320)
-            .shadow(color: kind == .overlay ? .clear : .black.opacity(0.4), radius: 14, y: 8)
-            .padding(kind == .overlay ? 4 : 16)
+            .shadow(color: kind.isTransparent ? .clear : .black.opacity(0.4), radius: 14, y: 8)
+            .padding(kind.isTransparent ? 4 : 16)
             .environment(\.colorScheme, .dark)
     }
 
@@ -398,6 +411,7 @@ struct StoryCard: View {
         case .progress: progress
         case .record: record
         case .countdown: countdown
+        case .route, .splits, .roadwork: RunSticker(kind: kind, data: data, dark: darkInk, hideName: privacy.hideName)
         }
     }
 
@@ -790,6 +804,137 @@ private struct OverlayCard: View {
     }
 }
 
+// MARK: - Run stickers
+
+/// Three run stickers, Strava-clean:
+/// - Route: the line of your run over your own photo, with distance, time and pace.
+/// - Splits: km-by-km bars with the fastest one lit.
+/// - Roadwork: the fighter version, with Zone 2 share (what a fight coach wants from a run).
+private struct RunSticker: View {
+    let kind: StoryCardKind
+    let data: StoryData
+    let dark: Bool
+    let hideName: Bool
+
+    private var ink: Color { dark ? Color(white: 0.08) : .white }
+    private var glow: Color { dark ? .white.opacity(0.5) : .black.opacity(0.45) }
+
+    var body: some View {
+        if let w = data.workout, let run = w.run {
+            switch kind {
+            case .route: route(run)
+            case .splits: splits(run)
+            default: roadwork(w, run)
+            }
+        }
+    }
+
+    private func unit(_ run: RunSummary) -> String { run.imperial ? "mi" : "km" }
+
+    private func route(_ run: RunSummary) -> some View {
+        VStack(spacing: 14) {
+            RouteShape(points: RouteMath.normalized(data.route))
+                .stroke(ink, style: StrokeStyle(lineWidth: 5, lineCap: .round, lineJoin: .round))
+                .frame(width: 190, height: 190)
+            HStack(alignment: .bottom, spacing: 26) {
+                figure("Distance", RouteMath.distanceText(run.distanceM, imperial: run.imperial), unit(run))
+                figure("Time", runClock(run.movingSeconds), nil)
+                figure("Pace", RouteMath.paceText(run.avgPace), "/\(unit(run))")
+            }
+            mark
+        }
+        .foregroundStyle(ink)
+        .shadow(color: glow, radius: 8)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func splits(_ run: RunSummary) -> some View {
+        let paces = run.splits.map { $0.pace(unit: run.unitMeters) }
+        let fastest = paces.min() ?? 0, slowest = paces.max() ?? 1
+        let best = run.splits.first { $0.pace(unit: run.unitMeters) == fastest }
+        return VStack(spacing: 12) {
+            HStack(alignment: .bottom, spacing: 6) {
+                ForEach(run.splits) { s in
+                    let p = s.pace(unit: run.unitMeters)
+                    let h = slowest > fastest ? 0.35 + 0.65 * (slowest - p) / (slowest - fastest) : 1
+                    VStack(spacing: 4) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(p == fastest ? broadcastRed : ink.opacity(0.75))
+                            .frame(height: 110 * h)
+                        Text("\(s.index)").font(.system(size: 11, weight: .semibold)).opacity(0.85)
+                    }
+                    .frame(maxWidth: 26)
+                }
+            }
+            .frame(height: 130, alignment: .bottom)
+            if let best {
+                Text("Fastest \(unit(run)) \(best.index) · \(RouteMath.paceText(fastest))")
+                    .font(.system(size: 17, weight: .semibold))
+            }
+            Text("\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(unit(run)) · \(RouteMath.paceText(run.avgPace)) /\(unit(run)) avg")
+                .font(.system(size: 14)).opacity(0.85)
+            mark
+        }
+        .foregroundStyle(ink)
+        .shadow(color: glow, radius: 8)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func roadwork(_ w: SavedWorkout, _ run: RunSummary) -> some View {
+        let total = w.zoneSeconds.values.reduce(0, +)
+        let zone2 = total > 60 ? Int((w.zoneSeconds[2, default: 0] / total * 100).rounded()) : nil
+        return VStack(alignment: .leading, spacing: 0) {
+            BroadcastTab(text: hideName || data.name.isEmpty ? "Roadwork" : "\(data.name) · Roadwork")
+            VStack(alignment: .leading, spacing: 10) {
+                if data.route.count >= 2 {
+                    RouteShape(points: RouteMath.normalized(data.route))
+                        .stroke(broadcastRed, style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
+                        .frame(height: 150)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(RouteMath.distanceText(run.distanceM, imperial: run.imperial)).font(heavy(64))
+                    Text(unit(run).uppercased()).font(heavy(24)).foregroundStyle(broadcastRed)
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 0) {
+                        Text(RouteMath.paceText(run.avgPace)).font(heavy(30))
+                        Text("PACE /\(unit(run).uppercased())").font(condensed(12, .medium)).opacity(0.75)
+                    }
+                }
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(panelBlack)
+            .overlay(alignment: .leading) { Rectangle().fill(broadcastRed).frame(width: 6) }
+            StatStrip(stats: [
+                (runClock(run.movingSeconds), "MOVING", false),
+                (zone2.map { "\($0)%" } ?? "–", "ZONE 2", (zone2 ?? 0) >= 70),
+                ("\(w.averageBPM)", "AVG BPM", false)
+            ])
+            BroadcastSignature(left: w.startDate.formatted(.dateTime.day().month()))
+        }
+    }
+
+    private func figure(_ label: String, _ value: String, _ unit: String?) -> some View {
+        VStack(spacing: 0) {
+            Text(label).font(.system(size: 13)).opacity(0.85)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value).font(.system(size: 30, weight: .light)).monospacedDigit()
+                if let unit { Text(unit).font(.system(size: 13)) }
+            }
+        }
+    }
+
+    private var mark: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "figure.boxing").font(.system(size: 15, weight: .semibold))
+            Text("FIGHT").font(heavy(19)).tracking(2)
+        }
+    }
+}
+
 // MARK: - Share screen
 
 struct StoryShareSheet: View {
@@ -900,8 +1045,8 @@ struct StoryShareSheet: View {
             backgroundView
             StoryCard(kind: selection, data: data, privacy: privacy, overlayOneLine: overlayOneLine, darkInk: darkInk)
                 .scaleEffect(0.72)
-                .frame(maxHeight: .infinity, alignment: selection == .overlay ? .bottom : .center)
-                .padding(.bottom, selection == .overlay ? 24 : 0)
+                .frame(maxHeight: .infinity, alignment: selection.isTransparent ? .bottom : .center)
+                .padding(.bottom, selection.isTransparent ? 24 : 0)
         }
         .frame(width: 270, height: 480)
         .clipShape(RoundedRectangle(cornerRadius: 26))
@@ -1022,8 +1167,8 @@ struct StoryShareSheet: View {
                 LinearGradient(colors: [Color(red: 0.165, green: 0.04, blue: 0.055), .black], startPoint: .top, endPoint: .bottom)
             }
             card
-                .frame(maxHeight: .infinity, alignment: selection == .overlay ? .bottom : .center)
-                .padding(.bottom, selection == .overlay ? 40 : 0)
+                .frame(maxHeight: .infinity, alignment: selection.isTransparent ? .bottom : .center)
+                .padding(.bottom, selection.isTransparent ? 40 : 0)
         }
         .frame(width: 360, height: 640)
         return render(canvas)

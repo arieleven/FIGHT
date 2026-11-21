@@ -12,6 +12,9 @@ struct WorkoutActivityAttributes: ActivityAttributes {
         var roundNumber: Int
         var isRest: Bool
         var phaseEndDate: Date
+        /// Runs: "5.02 km" and "5:28 /km" (nil for other workouts).
+        var distanceText: String? = nil
+        var paceText: String? = nil
     }
 
     var athleteName: String

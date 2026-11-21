@@ -59,6 +59,9 @@ struct LiveWorkoutView: View {
                     }
 
                     if session.isRecording {
+                        if session.run.isActive {
+                            RunLiveCard(run: session.run)
+                        }
                         heroBPMCard(currentZone: currentZone, profile: profile)
 
                         if let record = session.liveRecordBanner {

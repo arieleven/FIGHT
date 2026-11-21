@@ -51,6 +51,8 @@ struct WorkoutDraft: Codable {
     var impactsCount: Int?
     var jumps: [Double]?
     var activity: [ActivityPoint]?
+    var run: RunSummary?
+    var route: [RoutePoint]?
 }
 
 enum WorkoutFinalizer {
@@ -127,6 +129,7 @@ enum WorkoutFinalizer {
         )
         made.roundsAutoDetected = !detected.isEmpty
         if let hits = d.impactsCount { made.impactsCount = hits }
+        made.run = d.run
         made.jumps = d.jumps ?? []
         return made
     }
@@ -141,6 +144,11 @@ enum WorkoutFinalizer {
 final class WorkoutSession {
     let audio = AudioCoachEngine()
     let headMotion = HeadMotionTracker()
+    /// GPS for runs and walks.
+    let run = RunTracker()
+
+    /// Runs and walks record GPS.
+    var tracksGPS: Bool { selectedCategory == .roadwork || selectedCategory == .walk }
 
     /// The app's live session, for Siri and Shortcuts.
     static weak var shared: WorkoutSession?
@@ -821,6 +829,7 @@ final class WorkoutSession {
         lastTick = now
         lastDraftSave = now
         isRecording = true
+        if tracksGPS { startRun(at: now) }
         UIApplication.shared.isIdleTimerDisabled = true
 
         audio.prepareForWorkout(settings: profile.audioCoach)
@@ -894,6 +903,7 @@ final class WorkoutSession {
         headMotion.stop()
         headMotion.onNod = nil
         headMotion.onJump = nil
+        run.stop()
         audio.onBagHit = nil
         audio.countBagHits = false
         audio.shutdownAudio()
@@ -910,6 +920,7 @@ final class WorkoutSession {
             }
         }
         let end = Date()
+        let runResult = run.finish()
         let draft = makeDraft(now: end)
         stopRecordingCommon()
 
@@ -928,14 +939,19 @@ final class WorkoutSession {
             }
         }
 
-        let saved = WorkoutFinalizer.makeWorkout(from: draft, profile: current, ghost: selectedGhost, end: end)
+        var saved = WorkoutFinalizer.makeWorkout(from: draft, profile: current, ghost: selectedGhost, end: end)
+        if let runResult {
+            saved.run = runResult.summary
+            store.saveRoute(runResult.route, for: saved.id)
+        }
         store.save(saved)
         deleteDraft()
 
         if let health, health.autoSaveEnabled {
             let sensor = ble?.sensorInfo
             let hkSamples = saved.samples
-            Task { await health.save(workout: saved, samples: hkSamples, sensor: sensor) }
+            let route = runResult?.route ?? []
+            Task { await health.save(workout: saved, samples: hkSamples, sensor: sensor, route: route) }
         }
 
         speakDebrief(saved, history: store.workouts, profile: current)
@@ -1031,6 +1047,7 @@ final class WorkoutSession {
         }
         guideBreathingIfNeeded()
         recordActivity()
+        run.tick(dt: min(dt, 5), bpm: bpm, elapsed: elapsedSeconds)
         evaluateHeadCues()
         watchStrap(now: now)
 
@@ -1189,6 +1206,22 @@ final class WorkoutSession {
     // MARK: AirPods cues, nod, strap watch, debrief
 
     /// "Move your head" when head movement falls to half of round 1; "Chin down" when the chin stays up.
+    private func startRun(at date: Date) {
+        run.start(at: date, imperial: profile.useImperial)
+        run.onSplit = { [weak self] split in
+            guard let self, self.profile.audioCoach.masterEnabled else { return }
+            let unit = self.run.imperial ? "Mile" : "Kilometre"
+            let secs = Int(split.seconds.rounded())
+            var line = "\(unit) \(split.index). \(secs / 60) \(String(format: "%02d", secs % 60))."
+            if let hr = split.avgBPM { line += " Heart rate \(hr)." }
+            self.audio.announceCoachingCue(line, enabled: true)
+        }
+        run.onPauseChange = { [weak self] paused in
+            guard let self, self.profile.audioCoach.masterEnabled else { return }
+            self.audio.announceCoachingCue(paused ? "Paused." : "Resumed.", enabled: true)
+        }
+    }
+
     private func recordActivity() {
         guard headMotion.isReceiving || audio.countBagHits else { return }
         let total = headMotion.totalMoves + headMotion.totalBounces + bagHits
@@ -1513,7 +1546,8 @@ final class WorkoutSession {
         guard let activity = currentActivity else { return }
         let bpm = currentBPM
         let z = profile.zone(for: bpm)
-        let key = (bpm: bpm, zone: z.number, round: currentRound * 100 + planBlockIndex, rest: isRestPeriod || isInPlanTransition)
+        let key = (bpm: bpm, zone: z.number, round: currentRound * 100 + planBlockIndex + Int(run.distanceM / 100) * 10_000,
+                   rest: isRestPeriod || isInPlanTransition)
         let now = Date()
         if let last = lastActivityState,
            last.zone == key.zone, last.round == key.round, last.rest == key.rest,
@@ -1528,7 +1562,9 @@ final class WorkoutSession {
             isTimedRound: roundTimerEnabled || (isRunningPlan && !isInPlanTransition && !(currentBlock?.kind.isRoundBased ?? true)),
             roundNumber: isRunningPlan ? planBlockIndex + 1 : currentRound,
             isRest: isRestPeriod || isInPlanTransition,
-            phaseEndDate: now.addingTimeInterval(isInPlanTransition ? (planTransitionRemaining ?? 0) : (roundTimerEnabled ? phaseRemaining : blockRemaining))
+            phaseEndDate: now.addingTimeInterval(isInPlanTransition ? (planTransitionRemaining ?? 0) : (roundTimerEnabled ? phaseRemaining : blockRemaining)),
+            distanceText: run.isActive ? "\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(run.imperial ? "mi" : "km")" : nil,
+            paceText: run.isActive ? "\(RouteMath.paceText(run.currentPace)) /\(run.imperial ? "mi" : "km")" : nil
         )
         Task { await activity.update(.init(state: state, staleDate: nil)) }
     }
@@ -1556,7 +1592,9 @@ final class WorkoutSession {
             breathingGuided: breathingUsed,
             impactsCount: audio.countBagHits ? bagHits : nil,
             jumps: jumps.isEmpty ? nil : jumps,
-            activity: activityTrail.isEmpty ? nil : activityTrail
+            activity: activityTrail.isEmpty ? nil : activityTrail,
+            run: run.snapshot?.summary,
+            route: run.snapshot?.route
         )
     }
 
@@ -1646,6 +1684,7 @@ final class WorkoutSession {
         guard let store else { return }
         let owner = store.profiles.first { $0.id == draft.profileID } ?? store.activeProfile
         let saved = WorkoutFinalizer.makeWorkout(from: draft, profile: owner, ghost: nil, end: draft.lastUpdate)
+        if let route = draft.route { store.saveRoute(RouteMath.simplify(route), for: saved.id) }
         guard save else {
             // "Discard" still keeps it in Recently Deleted for 30 days.
             store.saveToTrash(saved)

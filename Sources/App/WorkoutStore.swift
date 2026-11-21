@@ -458,9 +458,29 @@ final class WorkoutStore: ObservableObject {
             let archiveURL = archivesDirectory.appendingPathComponent(archiveName)
             try? FileManager.default.removeItem(at: archiveURL)
         }
+        try? FileManager.default.removeItem(at: routesDirectory.appendingPathComponent("\(workout.id.uuidString).route"))
         workouts.removeAll { $0.id == workout.id }
         trash.removeAll { $0.id == workout.id }
         refreshGhostCache()
+    }
+
+    // MARK: Run routes (compressed, one file per run)
+
+    private var routesDirectory: URL {
+        let dir = documentsDirectory.appendingPathComponent("Routes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    func saveRoute(_ route: [RoutePoint], for id: UUID) {
+        guard route.count >= 2, let raw = try? JSONEncoder().encode(route), let packed = compressLZFSE(raw) else { return }
+        try? packed.write(to: routesDirectory.appendingPathComponent("\(id.uuidString).route"), options: .atomic)
+    }
+
+    func loadRoute(for id: UUID) -> [RoutePoint] {
+        guard let packed = try? Data(contentsOf: routesDirectory.appendingPathComponent("\(id.uuidString).route")),
+              let raw = Self.decompressLZFSE(packed) else { return [] }
+        return (try? JSONDecoder().decode([RoutePoint].self, from: raw)) ?? []
     }
 
     func resolvedSamples(for workout: SavedWorkout) -> [HeartRatePoint] {

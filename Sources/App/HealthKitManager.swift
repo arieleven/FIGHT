@@ -1,5 +1,6 @@
 import Foundation
 import HealthKit
+import CoreLocation
 
 /// Saves finished FIGHT sessions to Apple Health as workouts,
 /// including the full heart-rate trace and active energy.
@@ -150,7 +151,8 @@ final class HealthKitManager: ObservableObject {
             statusMessage = "Apple Health isn't available on this device"
             return
         }
-        let shareTypes: Set<HKSampleType> = [HKObjectType.workoutType(), heartRateType, activeEnergyType]
+        let shareTypes: Set<HKSampleType> = [HKObjectType.workoutType(), heartRateType, activeEnergyType,
+                                             HKQuantityType(.distanceWalkingRunning), HKSeriesType.workoutRoute()]
         do {
             try await store.requestAuthorization(toShare: shareTypes, read: readTypes)
             UserDefaults.standard.set(true, forKey: authorizedKey)
@@ -171,7 +173,9 @@ final class HealthKitManager: ObservableObject {
     /// Writes the workout, its heart-rate samples and active calories to Health.
     /// Returns true on success. Safe to call twice: already-saved workouts are skipped.
     @discardableResult
-    func save(workout: SavedWorkout, samples: [HeartRatePoint], sensor: SensorInfo? = nil) async -> Bool {
+    private var routeAuthorizationAsked: Bool { UserDefaults.standard.bool(forKey: "fight.health.routeAsked") }
+
+    func save(workout: SavedWorkout, samples: [HeartRatePoint], sensor: SensorInfo? = nil, route: [RoutePoint] = []) async -> Bool {
         guard isAvailable else { return false }
         guard !savedWorkoutIDs.contains(workout.id) else { return true }
         guard workout.duration >= 60 else {
@@ -179,8 +183,10 @@ final class HealthKitManager: ObservableObject {
             return false
         }
 
-        if !isAuthorized {
+        if !isAuthorized || (workout.run != nil && !routeAuthorizationAsked) {
+            // Runs need two more permissions (distance and route); iOS only asks about new ones.
             await requestAuthorization()
+            UserDefaults.standard.set(true, forKey: "fight.health.routeAsked")
             guard isAuthorized else { return false }
         }
 
@@ -230,6 +236,13 @@ final class HealthKitManager: ObservableObject {
                 ))
             }
 
+            if let run = workout.run, run.distanceM > 0 {
+                hkSamples.append(HKQuantitySample(
+                    type: HKQuantityType(.distanceWalkingRunning),
+                    quantity: HKQuantity(unit: .meter(), doubleValue: run.distanceM),
+                    start: start, end: end, device: device, metadata: nil))
+            }
+
             if !hkSamples.isEmpty {
                 let samplesToAdd = hkSamples
                 try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -259,7 +272,18 @@ final class HealthKitManager: ObservableObject {
             try await builder.addMetadata(metadata)
 
             try await builder.endCollection(at: end)
-            _ = try await builder.finishWorkout()
+            let finished = try await builder.finishWorkout()
+            // The route, so the run shows on a map in Fitness (and in Strava, via Health).
+            if let hkWorkout = finished, route.count >= 2 {
+                let routeBuilder = HKWorkoutRouteBuilder(healthStore: store, device: device)
+                let locations = route.map { p in
+                    CLLocation(coordinate: CLLocationCoordinate2D(latitude: p.lat, longitude: p.lon),
+                               altitude: p.alt ?? 0, horizontalAccuracy: 5, verticalAccuracy: p.alt == nil ? -1 : 10,
+                               course: -1, speed: p.speed ?? -1, timestamp: start.addingTimeInterval(p.t))
+                }
+                try? await routeBuilder.insertRouteData(locations)
+                _ = try? await routeBuilder.finishRoute(with: hkWorkout, metadata: nil)
+            }
 
             savedWorkoutIDs.insert(workout.id)
             UserDefaults.standard.set(savedWorkoutIDs.map(\.uuidString), forKey: savedIDsKey)
