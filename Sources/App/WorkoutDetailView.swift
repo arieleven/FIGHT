@@ -157,7 +157,7 @@ struct WorkoutDetailView: View {
             .padding()
         }
         .sheet(item: $storyFocus) { kind in StoryShareSheet(focus: kind, workout: workout) }
-        .navigationTitle(workout.category.rawValue)
+        .navigationTitle(workout.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {

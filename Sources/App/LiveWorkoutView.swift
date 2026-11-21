@@ -19,6 +19,8 @@ struct LiveWorkoutView: View {
     @State private var choosingPlan = false
     @State private var showingSetup = false
     @State private var plyoSheet: PlyoChoice?
+    @State private var chooser: MainChoice?
+    @State private var chooserFollowUp: ChooserFollowUp?
     @State private var showingMix = false
 
     var body: some View {
@@ -41,7 +43,7 @@ struct LiveWorkoutView: View {
                             .background(Color.orange.opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    if let plan = session.activePlan {
+                    if let plan = session.activePlan, session.isRecording {
                         planBanner(plan)
                     }
 
@@ -132,13 +134,11 @@ struct LiveWorkoutView: View {
 
                         TodayCard()
 
-                        heroBPMCard(currentZone: currentZone, profile: profile)
+                        if bleManager.isConnected {
+                            heroBPMCard(currentZone: currentZone, profile: profile)
+                        }
 
-                        quickStartRow
-
-                        setupSummaryCard
-
-                        controlButtons
+                        StartWorkoutSection { door in chooser = door }
                     }
                 }
                 .padding()
@@ -162,6 +162,17 @@ struct LiveWorkoutView: View {
             }
             .sheet(isPresented: $showingSetup) {
                 setupSheet
+            }
+            .sheet(item: $chooser, onDismiss: {
+                // Plyo and Mix have their own screens: open them once the picker has closed.
+                switch chooserFollowUp {
+                case .plyo: plyoSheet = PlyoChoice(variant: .power)
+                case .mix: showingMix = true
+                case nil: break
+                }
+                chooserFollowUp = nil
+            }) { door in
+                ChooserSheet(main: door) { follow in chooserFollowUp = follow }
             }
             .sheet(item: $plyoSheet) { choice in
                 PlyoPickerSheet(initial: choice.variant)
@@ -262,6 +273,10 @@ struct LiveWorkoutView: View {
         guard let plan = navigation.planToRun, !session.isRecording else { return }
         navigation.planToRun = nil
         session.queue(plan)
+        if navigation.startPlanNow {
+            navigation.startPlanNow = false
+            session.startWorkout()
+        }
     }
 
     private func queuedPlanCard(_ plan: TrainingPlan, profile: AthleteProfile) -> some View {

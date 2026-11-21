@@ -136,7 +136,6 @@ final class WorkoutTypeRulesTests: XCTestCase {
         for c in [WorkoutCategory.roadwork, .walk] {
             XCTAssertTrue(c.isRun)
             XCTAssertFalse(c.allowsBagCoach)
-            XCTAssertFalse(c.allowsRounds)
             XCTAssertTrue(c.focusOptions(disciplines: ["Muay Thai"]).isEmpty, "no 'jab, cross' after a run")
             XCTAssertFalse(c.drillTags.contains(.technical))
             XCTAssertFalse(c.drillTags.contains(.bagWork))
@@ -162,5 +161,28 @@ final class WorkoutTypeRulesTests: XCTestCase {
         var w = strapless(.roadwork, drill: .aerobicZ2)
         w.rpeRated = true
         XCTAssertEqual(w.effectiveLoad, w.sessionRPELoad, accuracy: 0.001)
+    }
+}
+
+final class WorkoutMenuTests: XCTestCase {
+    func testDoorsOfferOnlyWhatFits() {
+        let format = FightFormat(rounds: 3, minutes: 3)
+        let boxing = WorkoutMenu.fight(sport: "Boxing", format: format)
+        XCTAssertTrue(boxing.contains { $0.title == "Mitts" })
+        XCTAssertFalse(boxing.contains { $0.title == "Clinch" })
+        XCTAssertEqual(boxing.filter(\.bagCoach).count, 1, "only bag work gets the voice coach")
+        XCTAssertTrue(WorkoutMenu.fight(sport: "Muay Thai", format: format).contains { $0.title == "Clinch" })
+        let bjj = WorkoutMenu.fight(sport: "BJJ", format: format)
+        XCTAssertTrue(bjj.allSatisfy { $0.category == .bjj && !$0.bagCoach })
+        XCTAssertEqual(bjj.map(\.title), ["Drilling", "Positional", "Rolling"])
+
+        let bag = boxing.first { $0.bagCoach }!
+        XCTAssertEqual(bag.lengths.first?.rounds, 3, "fight length follows your fight format")
+        XCTAssertEqual(bag.displayName, "Boxing · Bag work")
+
+        XCTAssertTrue(WorkoutMenu.roadwork.allSatisfy { $0.category.isRun && !$0.bagCoach })
+        XCTAssertTrue(WorkoutMenu.roadwork.first!.lengths.isEmpty, "an easy run just starts")
+        XCTAssertTrue(WorkoutMenu.roadwork.filter { !$0.lengths.isEmpty }.allSatisfy { $0.category.allowsRounds })
+        XCTAssertTrue(WorkoutMenu.fitnessTest.lengths.isEmpty)
     }
 }

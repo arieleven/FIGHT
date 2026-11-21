@@ -15,6 +15,10 @@ struct WorkoutSetup: Codable, Equatable {
     var workSeconds: Int
     var restSeconds: Int
     var bag: Bool
+    /// From the three-door picker: "Muay Thai · Bag work", the round count and bag tempo.
+    var activity: String? = nil
+    var rounds: Int? = nil
+    var tempo: BagTempo? = nil
 }
 
 struct WorkoutSetupMemory: Codable {
@@ -53,6 +57,7 @@ struct WorkoutDraft: Codable {
     var activity: [ActivityPoint]?
     var run: RunSummary?
     var route: [RoutePoint]?
+    var activityName: String?
 }
 
 enum WorkoutFinalizer {
@@ -130,6 +135,7 @@ enum WorkoutFinalizer {
         made.roundsAutoDetected = !detected.isEmpty
         if let hits = d.impactsCount { made.impactsCount = hits }
         made.run = d.run
+        made.activityName = d.activityName
         made.jumps = d.jumps ?? []
         return made
     }
@@ -183,6 +189,10 @@ final class WorkoutSession {
     }
     var selectedGhost: GhostSession?
     var activePlan: WorkoutPrescription?
+    /// The picker's name for this workout ("Muay Thai · Bag work"); nil when set up another way.
+    var activityName: String?
+    /// Round count for timed rounds without the bag coach (the bag coach counts its own).
+    var plannedRounds: Int?
 
     // MARK: Live state
     private(set) var isRecording = false
@@ -360,7 +370,7 @@ final class WorkoutSession {
             guard let b = currentBlock, b.kind.isRoundBased, !isInPlanTransition, !planComplete else { return nil }
             return b.rounds + blockExtraRounds
         }
-        return bagEnabled ? totalBagRounds : nil
+        return bagEnabled ? totalBagRounds : (roundTimerEnabled ? plannedRounds : nil)
     }
 
     /// Time left in a timed (non-round) plan block.
@@ -393,7 +403,9 @@ final class WorkoutSession {
 
     private var currentSetup: WorkoutSetup {
         WorkoutSetup(category: selectedCategory, drill: selectedDrillTag, roundTimer: roundTimerEnabled,
-                     workSeconds: workDurationSeconds, restSeconds: restDurationSeconds, bag: bagEnabled)
+                     workSeconds: workDurationSeconds, restSeconds: restDurationSeconds, bag: bagEnabled,
+                     activity: activityName, rounds: bagEnabled ? bagPrefs.estimatedTotalRounds : plannedRounds,
+                     tempo: bagEnabled ? bagPrefs.tempo : nil)
     }
 
     /// Saves this workout's setup so the next one starts the same way (per workout type).
@@ -420,6 +432,18 @@ final class WorkoutSession {
         selectedDrillTag = c.drillTags.contains(s.drill) ? s.drill : c.defaultDrill
         bagEnabled = s.bag && c.allowsBagCoach
         roundTimerEnabled = (s.roundTimer || bagEnabled) && c.allowsRounds
+        activityName = s.activity
+        plannedRounds = roundTimerEnabled && !bagEnabled ? s.rounds : nil
+        if bagEnabled, let r = s.rounds {
+            var prefs = bagPrefs
+            prefs.workSeconds = s.workSeconds
+            prefs.restSeconds = s.restSeconds
+            prefs.totalMinutes = Self.bagMinutes(rounds: r, work: s.workSeconds, rest: s.restSeconds)
+            if let t = s.tempo { prefs.tempo = t }
+            bagPrefs = prefs
+            workDurationSeconds = s.workSeconds
+            restDurationSeconds = s.restSeconds
+        }
         if !bagEnabled {
             workDurationSeconds = s.workSeconds
             restDurationSeconds = s.restSeconds
@@ -446,6 +470,12 @@ final class WorkoutSession {
         if let plan = queuedPlan { return plan.title }
         var parts = [selectedCategory.rawValue]
         if selectedCategory == .lthrTest { return "30-min threshold test" }
+        func clockShort(_ s: Int) -> String { s % 60 == 0 ? "\(s / 60):00" : String(format: "%d:%02d", s / 60, s % 60) }
+        if let name = activityName {
+            if bagEnabled { return "\(name) · \(bagPrefs.estimatedTotalRounds) × \(clockShort(bagPrefs.workSeconds))" }
+            if roundTimerEnabled, let r = plannedRounds { return "\(name) · \(r) × \(clockShort(workDurationSeconds))" }
+            return name
+        }
         if selectedCategory.isRun { return "\(selectedCategory.rawValue) · \(selectedDrillTag.label(for: selectedCategory))" }
         func clock(_ s: Int) -> String { String(format: "%d:%02d", s / 60, s % 60) }
         if bagEnabled {
@@ -525,7 +555,42 @@ final class WorkoutSession {
         roundTimerEnabled = p.roundTimer
         workDurationSeconds = p.workSeconds
         restDurationSeconds = p.restSeconds
+        activityName = nil
+        plannedRounds = p.roundTimer && !bagEnabled ? p.rounds : nil
         activePlan = p
+    }
+
+    /// Bag-coach minutes that give exactly `rounds` rounds (the bag coach counts by total time).
+    static func bagMinutes(rounds: Int, work: Int, rest: Int) -> Int {
+        max(1, Int((Double(rounds * (work + rest) - rest) / 60).rounded(.up)))
+    }
+
+    /// Sets up a workout chosen behind one of the three doors.
+    func choose(_ option: ActivityOption, length: LengthOption?) {
+        guard !isRecording else { return }
+        unqueuePlan()
+        activePlan = nil
+        suppressDefaults = true
+        selectedCategory = option.category
+        suppressDefaults = false
+        selectedDrillTag = option.drill
+        selectedGhost = nil
+        if option.bagCoach, let l = length {
+            var prefs = bagPrefs
+            prefs.workSeconds = l.work
+            prefs.restSeconds = l.rest
+            prefs.totalMinutes = Self.bagMinutes(rounds: l.rounds, work: l.work, rest: l.rest)
+            if let t = l.tempo { prefs.tempo = t }
+            bagPrefs = prefs
+        }
+        bagEnabled = option.bagCoach
+        roundTimerEnabled = length != nil
+        if let l = length {
+            workDurationSeconds = l.work
+            restDurationSeconds = l.rest
+        }
+        plannedRounds = option.bagCoach ? nil : length?.rounds
+        activityName = option.displayName
     }
 
     // MARK: Training plans
@@ -538,6 +603,8 @@ final class WorkoutSession {
         suppressDefaults = false
         bagEnabled = false
         activePlan = nil
+        activityName = nil
+        plannedRounds = nil
         queuedPlan = plan
     }
 
@@ -1592,7 +1659,8 @@ final class WorkoutSession {
             jumps: jumps.isEmpty ? nil : jumps,
             activity: activityTrail.isEmpty ? nil : activityTrail,
             run: run.snapshot?.summary,
-            route: run.snapshot?.route
+            route: run.snapshot?.route,
+            activityName: activityName
         )
     }
 

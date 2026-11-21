@@ -182,14 +182,15 @@ struct PlyoPickerSheet: View {
                         .foregroundStyle(.secondary)
 
                     Button {
+                        navigation.startPlanNow = true
                         navigation.run(plan)
                         dismiss()
                     } label: {
-                        Text("Load \(variant.rawValue)").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+                        Label("Start \(variant.rawValue)", systemImage: "play.fill").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
-                    .tint(.red)
+                    .tint(.green)
 
                     Text("Plyos come first in a session, when you're fresh. Land soft and stop if a jump hurts.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -291,13 +292,14 @@ struct MixBuilderSheet: View {
 
                 Section {
                     Button {
+                        navigation.startPlanNow = true
                         navigation.run(MixBuilder.plan(items, profile: profile, gear: gear))
                         dismiss()
                     } label: {
-                        Text("Load Mix").font(.headline).frame(maxWidth: .infinity)
+                        Label("Start Mix", systemImage: "play.fill").font(.headline).frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(.red)
+                    .tint(.green)
                     .disabled(items.isEmpty)
                     .listRowBackground(Color.clear)
                     Button(saved ? "Saved to Plans" : "Save as a Plan") {

@@ -75,6 +75,7 @@ targets:
       - path: Sources/App/Plyo.swift
       - path: Sources/App/Encouragement.swift
       - path: Sources/App/RouteMath.swift
+      - path: Sources/App/WorkoutMenu.swift
       - path: Sources/PlanKit
     settings:
       base:

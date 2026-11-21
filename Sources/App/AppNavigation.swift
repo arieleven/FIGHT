@@ -28,6 +28,8 @@ final class AppNavigation: ObservableObject {
     @Published var importError: String?
     /// A plan the fighter chose to run; picked up by the Live tab.
     @Published var planToRun: TrainingPlan?
+    /// Start the plan right away (chosen from a picker) instead of just loading it.
+    var startPlanNow = false
 
     func run(_ plan: TrainingPlan) {
         planToRun = plan

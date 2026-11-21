@@ -50,7 +50,7 @@ struct TodayCard: View {
                 } label: {
                     HStack {
                         Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
-                        Text("Today: \(today.category.rawValue) · \(Int(today.duration / 60)) min")
+                        Text("Today: \(today.displayTitle) · \(Int(today.duration / 60)) min")
                             .font(.subheadline.weight(.semibold))
                         Spacer()
                         Text("Review").font(.subheadline).foregroundStyle(.green)

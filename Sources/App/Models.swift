@@ -590,7 +590,7 @@ enum WorkoutCategory: String, Codable, CaseIterable, Identifiable {
     /// Striking sessions where the voice bag coach makes sense.
     var allowsBagCoach: Bool { [.muayThai, .kickboxing, .heavyBag, .padWork].contains(self) }
     /// A round bell and rest timer make sense.
-    var allowsRounds: Bool { !isRun && self != .lthrTest }
+    var allowsRounds: Bool { self != .walk && self != .lthrTest }   // roadwork: fight-round runs and sprints
     /// Step-by-step plans (they carry their own blocks).
     var allowsPlans: Bool { !isRun && self != .lthrTest }
     /// Racing a past session's heart rate.
@@ -987,6 +987,11 @@ struct SavedWorkout: Codable, Identifiable {
     var jumps: [Double] = []
     /// GPS run: distance, splits, moving time (the route lives in its own file).
     var run: RunSummary?
+    /// What it was in the fighter's words, e.g. "Muay Thai · Bag work" (nil on older sessions).
+    var activityName: String?
+
+    /// The name to show for this session.
+    var displayTitle: String { activityName ?? category.rawValue }
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -999,7 +1004,7 @@ struct SavedWorkout: Codable, Identifiable {
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
         case trainingPlanID, trainingPlanTitle, blockResults
         case comboEvents, headMovesPerMinute, breathingGuided
-        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt, jumps, run
+        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt, jumps, run, activityName
     }
 
     init(
@@ -1143,6 +1148,7 @@ struct SavedWorkout: Codable, Identifiable {
         deletedAt = (try? c.decodeIfPresent(Date.self, forKey: .deletedAt)) ?? nil
         jumps = (try? c.decodeIfPresent([Double].self, forKey: .jumps)) ?? []
         run = (try? c.decodeIfPresent(RunSummary.self, forKey: .run)) ?? nil
+        activityName = (try? c.decodeIfPresent(String.self, forKey: .activityName)) ?? nil
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

@@ -53,7 +53,8 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Rounds found automatically** from your heart rate when you don't use the timer, and a short spoken debrief when you finish
 - **Gloves-on control**: End Round and Start Next Round on the lock screen, or nod on the stool to start the next round
 - **Starts the way you left it**: your last setup is remembered for each workout type, and the Start button says exactly what it will do
-- **Quick start**: Last, Plyo, Mix or Plans, in one tap (Coach's pick sits on the Today card)
+- **Three doors to start**: Fight (your sport → bag work, pads, shadowboxing, clinch, sparring, technique, or drilling and rolling for grapplers), Roadwork (easy run, fight-rounds run, sprints, hill sprints, recovery walk) and Conditioning (plyo, jump rope, circuit, mix, plans, fitness test). Then pick how long and press Start
+- **Go again**: one card under the doors starts last time's workout, the coach's pick or a loaded plan in one tap
 - **Coach answers first**: "Today: train hard / go easy / rest", then one button to load that session
 - **Units your way**: tap or swipe the unit next to any height or weight to switch cm ⇄ ft/in and kg ⇄ lb
 - **Try it with sample data**: You → Try FIGHT With Sample Data adds a sample fighter with three realistic sessions, a week of morning checks and an upcoming fight

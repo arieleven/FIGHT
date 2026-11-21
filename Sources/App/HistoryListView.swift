@@ -148,7 +148,7 @@ struct HistoryListView: View {
             HStack {
                 Image(systemName: workout.category.icon)
                     .foregroundStyle(.green)
-                Text(workout.category.rawValue)
+                Text(workout.displayTitle)
                     .font(.headline)
                 Text("• \(workout.drillTag.rawValue)")
                     .font(.caption.weight(.semibold))
