@@ -622,7 +622,8 @@ final class WorkoutStore: ObservableObject {
 
     /// The active fighter's 15 latest sessions plus imported ghosts.
     private func buildGhosts() -> [GhostSession] {
-        let fromWorkouts = workouts.lazy.filter { $0.profileID == self.activeProfileID }.prefix(15).map { w -> GhostSession in
+        let me = activeProfileID
+        let fromWorkouts = workouts.filter { $0.profileID == me }.prefix(15).map { w -> GhostSession in
             var g = w.toGhostSession()
             if g.samples.isEmpty {
                 let resolved = resolvedSamples(for: w)
