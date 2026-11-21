@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/fight-banner-v3.svg" alt="FIGHT. Train like it's fight week." width="100%">
+  <img src="docs/assets/fight-banner-v4.svg" alt="FIGHT. Train like it's fight week." width="100%">
 </p>
 
 <p align="center">
