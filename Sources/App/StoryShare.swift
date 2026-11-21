@@ -220,10 +220,11 @@ struct StoryData {
             if run.splits.count >= 2 { k.append(.splits) }
             k.append(.roadwork)
         }
-        if let w = workout {
+        // Heart-rate cards only when a strap was worn (a "0 BPM peak" card helps nobody).
+        if let w = workout, w.hasHeartRate {
             k.append(.mainEvent)
             if w.roundStats.count >= 2 { k.append(.rounds) }
-            if comparison != nil { k.append(.tape) }
+            if comparison?.hasHeartRate == true { k.append(.tape) }
             k.append(.poster)
             k.append(.overlay)
         }
@@ -911,7 +912,7 @@ private struct RunSticker: View {
             StatStrip(stats: [
                 (runClock(run.movingSeconds), "MOVING", false),
                 (zone2.map { "\($0)%" } ?? "–", "ZONE 2", (zone2 ?? 0) >= 70),
-                ("\(w.averageBPM)", "AVG BPM", false)
+                (w.hasHeartRate ? "\(w.averageBPM)" : "–", "AVG BPM", false)
             ])
             BroadcastSignature(left: w.startDate.formatted(.dateTime.day().month()))
         }

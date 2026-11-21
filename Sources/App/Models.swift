@@ -583,6 +583,54 @@ enum WorkoutCategory: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    // MARK: What each workout type is (one place decides what the app shows for it)
+
+    /// GPS runs and walks: distance, pace and splits. No rounds, combos or technique tags.
+    var isRun: Bool { self == .roadwork || self == .walk }
+    /// Striking sessions where the voice bag coach makes sense.
+    var allowsBagCoach: Bool { [.muayThai, .kickboxing, .heavyBag, .padWork].contains(self) }
+    /// A round bell and rest timer make sense.
+    var allowsRounds: Bool { !isRun && self != .lthrTest }
+    /// Step-by-step plans (they carry their own blocks).
+    var allowsPlans: Bool { !isRun && self != .lthrTest }
+    /// Racing a past session's heart rate.
+    var allowsGhost: Bool { !isRun && self != .lthrTest }
+    /// "Who did you spar / roll with?" and round results.
+    var hasPartner: Bool { self == .sparring || self == .bjj }
+
+    /// What the session was for, only the choices that fit this workout type.
+    var drillTags: [DrillTag] {
+        switch self {
+        case .roadwork, .walk: return [.aerobicZ2, .intervals]
+        case .lthrTest: return [.lthrProtocol]
+        case .sparring: return [.hardSparring, .technical, .sharkTank]
+        case .bjj: return [.technical, .hardSparring, .sharkTank]
+        case .conditioning: return [.intervals, .aerobicZ2]
+        case .heavyBag: return [.bagWork, .technical, .intervals]
+        case .muayThai, .kickboxing, .padWork: return [.technical, .bagWork, .intervals]
+        }
+    }
+
+    var defaultDrill: DrillTag { drillTags[0] }
+
+    /// Technique tags for "What did you work on?" (empty: the question isn't asked).
+    func focusOptions(disciplines: [String]) -> [String] {
+        let strikes = DisciplineRules.strikes(for: disciplines)
+        var striking = ["Jab", "Cross", "Hooks", "Uppercuts", "Body shots"]
+        if strikes.kicks { striking += ["Low kicks", "Body kicks", "Head kicks", "Teeps"] }
+        if strikes.kneesElbows { striking += ["Knees", "Elbows", "Clinch"] }
+        striking += ["Defence", "Footwork", "Counters"]
+        let grappling = ["Takedowns", "Guard", "Passing", "Escapes", "Submissions", "Ground"]
+        switch self {
+        case .muayThai, .kickboxing, .heavyBag, .padWork: return striking
+        case .sparring:
+            let grapples = !Set(disciplines).isDisjoint(with: ["MMA", "BJJ", "Wrestling"])
+            return striking + (grapples ? grappling : [])
+        case .bjj: return grappling + ["Clinch"]
+        case .roadwork, .walk, .conditioning, .lthrTest: return []
+        }
+    }
+
     var usesRoundTimerByDefault: Bool {
         switch self {
         case .muayThai, .kickboxing, .heavyBag, .padWork, .sparring, .bjj:
@@ -632,6 +680,19 @@ enum DrillTag: String, Codable, CaseIterable, Identifiable {
     case lthrProtocol = "LTHR Protocol"
 
     var id: String { rawValue }
+
+    /// Plain words for the picker, in the context of the workout type.
+    func label(for category: WorkoutCategory) -> String {
+        switch self {
+        case .aerobicZ2: return category.isRun ? "Easy (Zone 2)" : "Easy aerobic"
+        case .intervals: return category.isRun ? "Intervals / tempo" : "Hard intervals"
+        case .technical: return "Technique"
+        case .bagWork: return "Hard bag rounds"
+        case .hardSparring: return "Hard sparring"
+        case .sharkTank: return "Shark tank"
+        case .lthrProtocol: return "Threshold test"
+        }
+    }
 }
 
 // MARK: - Telemetry & Analytics Models
@@ -881,9 +942,9 @@ struct SavedWorkout: Codable, Identifiable {
     let averageBPM: Int
     let maxBPM: Int
     let minBPM: Int
-    let activeCalories: Double
+    var activeCalories: Double
     let bmrCalories: Double
-    let calories: Double
+    var calories: Double
     let epocBonusCalories: Double
     let trimpScore: Double
     let cardiacDriftPercent: Double
@@ -1092,8 +1153,13 @@ struct SavedWorkout: Codable, Identifiable {
     /// Training load used everywhere in the coach: heart-rate TRIMP, blended 50/50
     /// with session-RPE once the athlete has rated the session (HR alone
     /// under-reads sparring, clinch and strength work).
+    /// False when no strap was worn (no heart rate to judge zones, recovery or load by).
+    var hasHeartRate: Bool { averageBPM > 0 && zoneSeconds.values.reduce(0, +) >= 60 }
+
     var effectiveLoad: Double {
-        rpeRated ? (trimpScore + sessionRPELoad) / 2 : trimpScore
+        guard rpeRated else { return trimpScore }
+        // No heart rate: the effort rating is the whole story (averaging with 0 would halve it).
+        return hasHeartRate ? (trimpScore + sessionRPELoad) / 2 : sessionRPELoad
     }
 
     var avgInterRoundDrop: Int? {

@@ -115,13 +115,17 @@ struct WorkoutDetailView: View {
                     history: workoutStore.workouts
                 )
                 CoachReviewCard(review: review, showItems: false)
-                interactiveChartCard
+                if workout.hasHeartRate {
+                    interactiveChartCard
+                }
 
                 AdvancedSection("Full analysis", subtitle: "Review breakdown, zones, rounds, calories, key moments, metrics", key: "workout.details") {
                     if !review.items.isEmpty {
                         CoachReviewCard(review: review, showItems: true, showTakeaways: false)
                     }
-                    zoneBreakdownCard
+                    if workout.hasHeartRate {
+                        zoneBreakdownCard
+                    }
                     if workout.roundStats.count >= 2 {
                         roundDecayChartCard
                     }
@@ -145,7 +149,9 @@ struct WorkoutDetailView: View {
                             .card()
                     }
                     calorieBreakdownCard
-                    advancedMetricsGrid
+                    if workout.hasHeartRate {
+                        advancedMetricsGrid
+                    }
                 }
             }
             .padding()
@@ -247,14 +253,24 @@ struct WorkoutDetailView: View {
 
             Divider()
 
-            HStack {
-                statBox(title: "DURATION", value: formatDuration(workout.duration))
-                Spacer()
-                statBox(title: "AVG HR", value: "\(workout.averageBPM)")
-                Spacer()
-                statBox(title: "MAX HR", value: "\(workout.maxBPM)")
-                Spacer()
-                statBox(title: "MIN HR", value: "\(workout.minBPM)")
+            if workout.hasHeartRate {
+                HStack {
+                    statBox(title: "DURATION", value: formatDuration(workout.duration))
+                    Spacer()
+                    statBox(title: "AVG HR", value: "\(workout.averageBPM)")
+                    Spacer()
+                    statBox(title: "MAX HR", value: "\(workout.maxBPM)")
+                    Spacer()
+                    statBox(title: "MIN HR", value: "\(workout.minBPM)")
+                }
+            } else {
+                HStack {
+                    statBox(title: "DURATION", value: formatDuration(workout.duration))
+                    Spacer()
+                    Label("No heart rate recorded", systemImage: "heart.slash")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding()
@@ -764,13 +780,17 @@ struct SessionRatingCard: View {
                 if !w.notes.isEmpty {
                     Text(w.notes).font(.caption).foregroundStyle(.secondary)
                 }
-                Text(String(format: "Session load %.0f (heart rate %.0f, effort %.0f)", w.effectiveLoad, w.trimpScore, w.sessionRPELoad))
+                Text(w.hasHeartRate
+                     ? String(format: "Session load %.0f (heart rate %.0f, effort %.0f)", w.effectiveLoad, w.trimpScore, w.sessionRPELoad)
+                     : String(format: "Session load %.0f (from your effort rating)", w.effectiveLoad))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
                 Text("How hard was that?")
                     .font(.headline)
-                Text("Your rating makes training load more accurate. Heart rate alone under-reads sparring, clinch and strength work.")
+                Text(w.hasHeartRate
+                     ? "Your rating makes training load more accurate. Heart rate alone under-reads sparring, clinch and strength work."
+                     : "No heart rate was recorded, so your rating is how the coach counts this session.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 HStack(spacing: 4) {

@@ -991,6 +991,11 @@ enum SessionDebrief {
     /// A short spoken summary for the end of a session.
     static func text(for w: SavedWorkout, history: [SavedWorkout], profile: AthleteProfile) -> String {
         var parts: [String] = ["Session saved. \(Int(w.duration / 60)) minutes."]
+        if let run = w.run, run.distanceM >= 100 {
+            let unit = run.imperial ? "miles" : "kilometres"
+            let pace = Int(run.avgPace.rounded())
+            parts.append("\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(unit), \(pace / 60) \(String(format: "%02d", pace % 60)) per \(run.imperial ? "mile" : "kilometre").")
+        }
         let rounds = w.roundStats.sorted { $0.roundNumber < $1.roundNumber }
         if rounds.count >= 2, let hardest = rounds.max(by: { $0.avgBPM < $1.avgBPM }) {
             parts.append("Round \(hardest.roundNumber) was your hardest, at \(hardest.avgBPM) beats.")
@@ -1002,6 +1007,7 @@ enum SessionDebrief {
                 .flatMap(\.roundStats).compactMap(\.stoolDropBPM).max() ?? 0
             if best > monthBest && monthBest > 0 { parts.append("Best recovery this month: \(best) beats.") }
         }
+        guard w.effectiveLoad > 0 else { return parts.joined(separator: " ") }   // no strap, no RPE: no load verdict
         let typical = mean(history.filter { $0.profileID == w.profileID && $0.id != w.id }.suffix(20).map(\.effectiveLoad)) ?? w.effectiveLoad
         if w.effectiveLoad > typical * 1.3 {
             parts.append("Big session. Go easy or rest tomorrow.")

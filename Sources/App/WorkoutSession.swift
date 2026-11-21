@@ -415,10 +415,11 @@ final class WorkoutSession {
         suppressDefaults = true
         selectedCategory = s.category
         suppressDefaults = false
-        selectedDrillTag = s.drill
-        let noBag: [WorkoutCategory] = [.walk, .roadwork, .lthrTest]
-        bagEnabled = s.bag && !noBag.contains(s.category)
-        roundTimerEnabled = s.roundTimer || bagEnabled
+        let c = s.category
+        // Only what fits the workout type survives (a run never comes back with a bag coach or rounds).
+        selectedDrillTag = c.drillTags.contains(s.drill) ? s.drill : c.defaultDrill
+        bagEnabled = s.bag && c.allowsBagCoach
+        roundTimerEnabled = (s.roundTimer || bagEnabled) && c.allowsRounds
         if !bagEnabled {
             workDurationSeconds = s.workSeconds
             restDurationSeconds = s.restSeconds
@@ -445,6 +446,7 @@ final class WorkoutSession {
         if let plan = queuedPlan { return plan.title }
         var parts = [selectedCategory.rawValue]
         if selectedCategory == .lthrTest { return "30-min threshold test" }
+        if selectedCategory.isRun { return "\(selectedCategory.rawValue) · \(selectedDrillTag.label(for: selectedCategory))" }
         func clock(_ s: Int) -> String { String(format: "%d:%02d", s / 60, s % 60) }
         if bagEnabled {
             parts.append("\(bagPrefs.estimatedTotalRounds) × \(clock(bagPrefs.workSeconds))")
@@ -460,23 +462,13 @@ final class WorkoutSession {
             apply(saved)
             return
         }
-        roundTimerEnabled = category.usesRoundTimerByDefault
+        roundTimerEnabled = category.usesRoundTimerByDefault && category.allowsRounds
         workDurationSeconds = category.defaultWorkSeconds
         restDurationSeconds = category.defaultRestSeconds
-        switch category {
-        case .lthrTest:
-            selectedDrillTag = .lthrProtocol
-            bagEnabled = false
-        case .walk, .roadwork:
-            selectedDrillTag = .aerobicZ2
-            bagEnabled = false
-        case .heavyBag:
-            selectedDrillTag = .bagWork
-        case .sparring:
-            selectedDrillTag = .hardSparring
-        default:
-            break
-        }
+        selectedDrillTag = category.defaultDrill
+        if !category.allowsBagCoach { bagEnabled = false }
+        if !category.allowsPlans { unqueuePlan() }
+        if !category.allowsGhost { selectedGhost = nil }
     }
 
     private func bagEnabledChanged() {
@@ -943,6 +935,12 @@ final class WorkoutSession {
         if let runResult {
             saved.run = runResult.summary
             store.saveRoute(runResult.route, for: saved.id)
+            if !saved.hasHeartRate {
+                // No strap: estimate the burn from distance (≈1 kcal per kg per km running, about half walking).
+                let km = runResult.summary.distanceM / 1000
+                saved.activeCalories = current.weightKg * km * (saved.category == .walk ? 0.53 : 1.0)
+                saved.calories = saved.activeCalories + saved.bmrCalories
+            }
         }
         store.save(saved)
         deleteDraft()

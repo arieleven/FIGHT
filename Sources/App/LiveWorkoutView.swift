@@ -62,7 +62,19 @@ struct LiveWorkoutView: View {
                         if session.run.isActive {
                             RunLiveCard(run: session.run)
                         }
-                        heroBPMCard(currentZone: currentZone, profile: profile)
+                        if session.run.isActive && !bleManager.isConnected {
+                            // Running without a strap: keep the screen about distance and pace.
+                            Button {
+                                showingDeviceSheet = true
+                            } label: {
+                                Label("No heart rate. Tap to connect your strap.", systemImage: "heart.slash")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                        } else {
+                            heroBPMCard(currentZone: currentZone, profile: profile)
+                        }
 
                         if let record = session.liveRecordBanner {
                             Label(record, systemImage: "trophy.fill")
@@ -239,7 +251,7 @@ struct LiveWorkoutView: View {
     }
 
     private var bagAvailable: Bool {
-        session.selectedCategory != .walk && session.selectedCategory != .lthrTest && session.selectedCategory != .roadwork
+        session.selectedCategory.allowsBagCoach
     }
 
     private var planBagBlockActive: Bool {
@@ -433,6 +445,16 @@ struct LiveWorkoutView: View {
         }
     }
 
+    /// Only the modes that make sense for this workout type.
+    private var availableModes: [SetupMode] {
+        let c = session.selectedCategory
+        var modes: [SetupMode] = [.free]
+        if c.allowsRounds { modes.append(.rounds) }
+        if c.allowsBagCoach { modes.append(.bag) }
+        if c.allowsPlans { modes.append(.plan) }
+        return modes
+    }
+
     private var setupMode: SetupMode {
         if session.queuedPlan != nil || choosingPlan { return .plan }
         if session.bagEnabled { return .bag }
@@ -474,8 +496,21 @@ struct LiveWorkoutView: View {
                     .font(.headline)
                 Spacer()
                 Picker("Workout type", selection: sessionBinding.selectedCategory) {
-                    ForEach(workoutTypes) { cat in
-                        Label(cat.rawValue, systemImage: cat.icon).tag(cat)
+                    // Grouped so a run never sits between bag work and sparring.
+                    Section("Fight training") {
+                        ForEach(workoutTypes.filter { !$0.isRun && $0 != .conditioning && $0 != .lthrTest }) { cat in
+                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
+                        }
+                    }
+                    Section("Run and walk") {
+                        ForEach(workoutTypes.filter(\.isRun)) { cat in
+                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
+                        }
+                    }
+                    Section("Other") {
+                        ForEach(workoutTypes.filter { $0 == .conditioning || $0 == .lthrTest }) { cat in
+                            Label(cat.rawValue, systemImage: cat.icon).tag(cat)
+                        }
                     }
                 }
                 .pickerStyle(.menu)
@@ -486,11 +521,15 @@ struct LiveWorkoutView: View {
                 Text("30-minute threshold test: a 10-minute warm-up, then 20 minutes as hard as you can sustain. Your zones update automatically at the end.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+            } else if session.selectedCategory.isRun {
+                runEssentials
             } else {
-                Picker("Mode", selection: setupModeBinding) {
-                    ForEach(SetupMode.allCases) { Text($0.rawValue).tag($0) }
+                if availableModes.count > 1 {
+                    Picker("Mode", selection: setupModeBinding) {
+                        ForEach(availableModes) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
                 }
-                .pickerStyle(.segmented)
 
                 Text(setupMode.explainer)
                     .font(.caption)
@@ -509,6 +548,20 @@ struct LiveWorkoutView: View {
             }
         }
         .card()
+    }
+
+    /// Runs and walks: GPS does the work; the only choice is easy or hard.
+    private var runEssentials: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Run type", selection: sessionBinding.selectedDrillTag) {
+                ForEach(session.selectedCategory.drillTags) { Text($0.label(for: session.selectedCategory)).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            Label("GPS distance, pace and splits. The coach calls every \(workoutStore.activeProfile.useImperial ? "mile" : "km").",
+                  systemImage: "location.fill")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private var roundEssentials: some View {
@@ -574,20 +627,37 @@ struct LiveWorkoutView: View {
         }
     }
 
+    /// Runs and tests have nothing extra to set; fight sessions get the session goal, bag
+    /// settings and the ghost opponent.
+    private var hasAdvancedOptions: Bool {
+        let c = session.selectedCategory
+        return !c.isRun && c != .lthrTest && session.queuedPlan == nil
+    }
+
+    private var advancedSubtitle: String {
+        var parts = ["Session goal"]
+        if session.bagEnabled { parts.append("bag settings") }
+        if session.selectedCategory.allowsGhost { parts.append("ghost opponent") }
+        return parts.joined(separator: ", ")
+    }
+
     @ViewBuilder
     private var advancedSetup: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Picker("Drill type", selection: sessionBinding.selectedDrillTag) {
-                ForEach(DrillTag.allCases) { tag in
-                    Text(tag.rawValue).tag(tag)
+        let c = session.selectedCategory
+        if c.drillTags.count > 1 {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Session goal", selection: sessionBinding.selectedDrillTag) {
+                    ForEach(c.drillTags) { tag in
+                        Text(tag.label(for: c)).tag(tag)
+                    }
                 }
+                .pickerStyle(.segmented)
+                Text("Tells the coach what this session was for, so the review can judge it fairly.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .pickerStyle(.menu)
-            Text("Tells the coach what this session was for, so the review can judge it fairly.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            .card()
         }
-        .card()
 
         if session.bagEnabled {
             Button {
@@ -600,7 +670,9 @@ struct LiveWorkoutView: View {
             .buttonStyle(.bordered)
         }
 
-        ghostSimulatorCard
+        if c.allowsGhost {
+            ghostSimulatorCard
+        }
     }
 
     // MARK: Hero
@@ -1017,6 +1089,7 @@ struct LiveWorkoutView: View {
     private var setupDetailLine: String {
         if let plan = session.queuedPlan { return "\(plan.blocks.count) blocks · ~\(plan.plannedSeconds / 60) min" }
         if let p = session.activePlan { return "Coach's pick · target \(p.targetLowBPM)–\(p.targetHighBPM) BPM" }
+        if session.selectedCategory.isRun { return "GPS distance, pace and splits" }
         if session.bagEnabled { return "\(session.bagPrefs.tempo.displayName) · \(session.bagPrefs.totalMinutes) min" }
         if session.roundTimerEnabled { return "\(formatDuration(TimeInterval(session.restDurationSeconds))) rest between rounds" }
         return "Heart rate, zones and calories"
@@ -1027,8 +1100,10 @@ struct LiveWorkoutView: View {
             ScrollView {
                 VStack(spacing: 16) {
                     workoutSetupCard
-                    AdvancedSection("More options", subtitle: "Drill type, ghost opponent, bag fine-tuning", key: "live.setup") {
-                        advancedSetup
+                    if hasAdvancedOptions {
+                        AdvancedSection("More options", subtitle: advancedSubtitle, key: "live.setup") {
+                            advancedSetup
+                        }
                     }
                 }
                 .padding()

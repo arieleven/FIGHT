@@ -200,12 +200,27 @@ struct SessionTagsCard: View {
     @State private var results: [String] = []
     @State private var loaded = false
 
+    private var workout: SavedWorkout? { workoutStore.workouts.first { $0.id == workoutID } }
+
+    /// Only the techniques that fit this workout (none for runs, conditioning or tests).
+    private var options: [String] {
+        guard let w = workout else { return [] }
+        return w.category.focusOptions(disciplines: workoutStore.profile(for: w).trainedDisciplines)
+    }
+
     var body: some View {
-        let w = workoutStore.workouts.first { $0.id == workoutID }
+        if let w = workout, !options.isEmpty || Self.isSparring(w) {
+            content(w)
+        }
+    }
+
+    private func content(_ w: SavedWorkout) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("What did you work on?").font(.headline)
+            if !options.isEmpty {
+                Text("What did you work on?").font(.headline)
+            }
             FlowLayout(spacing: 6) {
-                ForEach(SparringInsights.focusOptions, id: \.self) { tag in
+                ForEach(options, id: \.self) { tag in
                     let on = focus.contains(tag)
                     Button {
                         if on { focus.remove(tag) } else { focus.insert(tag) }
@@ -222,9 +237,9 @@ struct SessionTagsCard: View {
                     .accessibilityAddTraits(on ? .isSelected : [])
                 }
             }
-            if let w, Self.isSparring(w) {
-                Divider()
-                Text("Who did you spar?").font(.headline)
+            if Self.isSparring(w) {
+                if !options.isEmpty { Divider() }
+                Text(w.category == .bjj ? "Who did you roll with?" : "Who did you spar?").font(.headline)
                 TextField("Partner's name", text: $partner)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(save)
@@ -264,7 +279,7 @@ struct SessionTagsCard: View {
         }
         .card()
         .onAppear {
-            guard !loaded, let w else { return }
+            guard !loaded else { return }
             loaded = true
             focus = Set(w.focusTags)
             partner = w.partner ?? ""
@@ -274,7 +289,7 @@ struct SessionTagsCard: View {
     }
 
     static func isSparring(_ w: SavedWorkout) -> Bool {
-        w.category == .sparring || w.drillTag == .hardSparring || w.partner != nil
+        w.category.hasPartner || (w.drillTag == .hardSparring && !w.category.isRun) || w.partner != nil
     }
 
     private func cycle(_ i: Int, count: Int) {
@@ -305,7 +320,7 @@ struct SessionTagsCard: View {
 
     private func save() {
         let trimmed = results.reversed().drop { $0.isEmpty }.reversed()
-        workoutStore.updateTags(workoutID: workoutID, focus: SparringInsights.focusOptions.filter { focus.contains($0) },
+        workoutStore.updateTags(workoutID: workoutID, focus: options.filter { focus.contains($0) } + focus.filter { !options.contains($0) }.sorted(),
                                 partner: partner, roundResults: Array(trimmed))
     }
 }

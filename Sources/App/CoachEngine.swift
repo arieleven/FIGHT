@@ -350,7 +350,7 @@ enum CoachEngine {
         -> (score: Int?, z12PerWeek: Double, drift: Double?) {
         let z12 = ws.reduce(0.0) { $0 + $1.zoneSeconds[1, default: 0] + $1.zoneSeconds[2, default: 0] } / 60.0 / 4.0
         let steady = ws.filter { w in
-            (w.category == .roadwork || w.category == .walk || w.drillTag == .aerobicZ2) && w.duration >= 1200
+            (w.category.isRun || w.drillTag == .aerobicZ2) && w.duration >= 1200 && w.hasHeartRate
         }
         let drift = mean(steady.map(\.cardiacDriftPercent))
         let score = blend([
@@ -415,7 +415,7 @@ enum CoachEngine {
 
     private static func staminaComponents(_ ws: [SavedWorkout]) -> (score: Int?, creep: Double?, drift: Double?, roundsPerSession: Double?) {
         let creep = mean(ws.compactMap { roundCreepPercent($0.roundStats) })
-        let long = ws.filter { $0.roundStats.count < 2 && $0.duration >= 1800 }
+        let long = ws.filter { $0.roundStats.count < 2 && $0.duration >= 1800 && $0.hasHeartRate }
         let drift = mean(long.map(\.cardiacDriftPercent))
         let roundSessions = ws.filter { $0.roundStats.count >= 2 }
         let rps = roundSessions.isEmpty ? nil : Double(roundSessions.map(\.roundStats.count).reduce(0, +)) / Double(roundSessions.count)
@@ -829,13 +829,35 @@ enum CoachEngine {
         let mid = w.zoneSeconds[3, default: 0] / total
         let high = (w.zoneSeconds[4, default: 0] + w.zoneSeconds[5, default: 0]) / total
         let maxHR = Double(profile.effectiveMaxHR)
+        let hasHR = w.hasHeartRate
+
+        // Runs: pace evenness from the splits (works without a strap).
+        if let run = w.run {
+            let full = run.splits.filter { $0.meters >= run.unitMeters - 1 }
+            let paces = full.map { $0.pace(unit: run.unitMeters) }
+            if paces.count >= 3, let m = mean(paces), let sdv = sd(paces), m > 0 {
+                let cv = sdv / m * 100
+                items.append(.init(title: "Even Pacing", icon: "speedometer", score: Int(scale(cv, worst: 10, best: 2)),
+                                   note: String(format: "Splits varied %.0f%%", cv)))
+                if let last = paces.last, let first = paces.first, last < first * 0.97 {
+                    takeaways.append("Negative split: you finished faster than you started. That's how good runs are paced.")
+                } else if cv > 8 {
+                    takeaways.append("Your km times jumped around. Start slower and hold an even pace.")
+                }
+            }
+        }
+        guard hasHR else {
+            takeaways.append("No heart rate was recorded. Wear your strap to get zones, recovery and coaching for this kind of session.")
+            let overall = items.isEmpty ? nil : Int(Double(items.map(\.score).reduce(0, +)) / Double(items.count))
+            return WorkoutReview(overall: overall, items: items, takeaways: takeaways, loadComparison: nil)
+        }
 
         // 1. Did intensity match the session's intent?
         var intent: (Int, String)?
         switch w.drillTag {
         case .aerobicZ2:
             intent = (Int(scale(low, worst: 0.5, best: 0.85)), "\(Int(low * 100))% easy (target 80%+)")
-            if low < 0.75 { takeaways.append("Slow down on Z2 days. You spent \(Int((1 - low) * 100))% above Zone 2, which turns base work into fatigue.") }
+            if low < 0.75 { takeaways.append("Slow down on easy days. You spent \(Int((1 - low) * 100))% above Zone 2, which turns base work into fatigue.") }
         case .technical:
             let s = blend([(scale(low + mid, worst: 0.4, best: 0.8), 0.7), (scale(high, worst: 0.3, best: 0.05), 0.3)]) ?? 50
             intent = (s, "\(Int((low + mid) * 100))% controlled (target 70%+)")
@@ -872,7 +894,7 @@ enum CoachEngine {
         }
 
         // 4. Pacing on continuous efforts
-        if w.roundStats.count < 2 && w.duration >= 1200 {
+        if w.roundStats.count < 2 && w.duration >= 1200 && w.cardiacDriftPercent != 0 {
             let s = Int(scale(w.cardiacDriftPercent, worst: 12, best: 3))
             items.append(.init(title: "Pacing", icon: "speedometer", score: s,
                                note: String(format: "%.1f%% cardiac drift", w.cardiacDriftPercent)))
@@ -917,7 +939,7 @@ enum CoachEngine {
         if others.count >= 3 {
             let sorted = others.map(\.effectiveLoad).sorted()
             let median = sorted[sorted.count / 2]
-            if median > 0 {
+            if median > 0, w.effectiveLoad > 0 {
                 let ratio = w.effectiveLoad / median
                 loadText = String(format: "Load %.0f — %.0f%% of your typical session", w.effectiveLoad, ratio * 100)
                 if ratio > 1.6 { takeaways.append("This was a big session. Plan an easy day next.") }

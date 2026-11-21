@@ -171,8 +171,15 @@ struct HistoryListView: View {
 
             HStack(spacing: 12) {
                 Label(formatDuration(workout.duration), systemImage: "clock")
-                Label("\(workout.averageBPM) avg", systemImage: "heart.fill")
-                    .foregroundStyle(.red)
+                if let run = workout.run {
+                    Label("\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(run.imperial ? "mi" : "km")",
+                          systemImage: "location.fill")
+                        .foregroundStyle(.green)
+                }
+                if workout.hasHeartRate {
+                    Label("\(workout.averageBPM) avg", systemImage: "heart.fill")
+                        .foregroundStyle(.red)
+                }
                 Label("\(Int(workout.activeCalories)) act", systemImage: "flame.fill")
                     .foregroundStyle(.orange)
                 if let hrr = workout.hrr60Drop {

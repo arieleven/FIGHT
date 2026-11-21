@@ -112,3 +112,55 @@ final class RouteTests: XCTestCase {
         XCTAssertEqual(back.speed ?? 0, 3.46, accuracy: 0.001)
     }
 }
+
+final class WorkoutTypeRulesTests: XCTestCase {
+    private func strapless(_ category: WorkoutCategory, drill: DrillTag) -> SavedWorkout {
+        let start = Date().addingTimeInterval(-3600)
+        var w = SavedWorkout(
+            id: UUID(), profileID: UUID(), profileName: "Test", category: category, drillTag: drill,
+            rpe: 5, notes: "", startDate: start, endDate: start.addingTimeInterval(1800), duration: 1800,
+            averageBPM: 0, maxBPM: 0, minBPM: 0, activeCalories: 0, bmrCalories: 40, calories: 40,
+            epocBonusCalories: 0, trimpScore: 0, cardiacDriftPercent: 0, hrr60Drop: nil, autoHRREvents: [],
+            rmssdMs: nil, strikesCuedCount: 0, ghostBaselineName: nil, ghostAvgDeltaBPM: nil,
+            zoneSeconds: [:], roundStats: [], pointsOfInterest: [], samples: [], isCompressedArchive: false, archiveFileName: nil
+        )
+        w.run = RunSummary(distanceM: 5000, movingSeconds: 1650, elevationGain: 10,
+                           splits: [330, 328, 331, 329, 332].enumerated().map {
+                               RunSplit(index: $0.offset + 1, meters: 1000, seconds: Double($0.element), avgBPM: nil, elevation: 0)
+                           },
+                           source: "iPhone GPS", imperial: false, hasRoute: true)
+        return w
+    }
+
+    func testRunsHaveNoFightOptions() {
+        for c in [WorkoutCategory.roadwork, .walk] {
+            XCTAssertTrue(c.isRun)
+            XCTAssertFalse(c.allowsBagCoach)
+            XCTAssertFalse(c.allowsRounds)
+            XCTAssertTrue(c.focusOptions(disciplines: ["Muay Thai"]).isEmpty, "no 'jab, cross' after a run")
+            XCTAssertFalse(c.drillTags.contains(.technical))
+            XCTAssertFalse(c.drillTags.contains(.bagWork))
+        }
+        XCTAssertTrue(WorkoutCategory.conditioning.focusOptions(disciplines: ["Boxing"]).isEmpty)
+        XCTAssertFalse(WorkoutCategory.sparring.allowsBagCoach)
+        XCTAssertFalse(WorkoutCategory.heavyBag.focusOptions(disciplines: ["Boxing"]).contains("Low kicks"), "boxers aren't asked about kicks")
+        XCTAssertTrue(WorkoutCategory.bjj.focusOptions(disciplines: ["BJJ"]).contains("Guard"))
+    }
+
+    func testReviewWithoutHeartRateMakesNoZoneClaims() {
+        let w = strapless(.roadwork, drill: .aerobicZ2)
+        XCTAssertFalse(w.hasHeartRate)
+        let review = CoachEngine.review(workout: w, profile: AthleteProfile(), history: [])
+        XCTAssertFalse(review.takeaways.contains { $0.contains("above Zone 2") })
+        XCTAssertFalse(review.items.contains { $0.title == "Intent Match" })
+        XCTAssertTrue(review.items.contains { $0.title == "Even Pacing" })
+        XCTAssertTrue(review.takeaways.contains { $0.contains("No heart rate") })
+        XCTAssertNil(review.loadComparison)
+    }
+
+    func testEffortRatingIsTheWholeLoadWithoutHeartRate() {
+        var w = strapless(.roadwork, drill: .aerobicZ2)
+        w.rpeRated = true
+        XCTAssertEqual(w.effectiveLoad, w.sessionRPELoad, accuracy: 0.001)
+    }
+}

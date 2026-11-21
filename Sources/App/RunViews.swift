@@ -106,7 +106,7 @@ struct RunSummarySection: View {
             stat("Distance", "\(RouteMath.distanceText(run.distanceM, imperial: run.imperial)) \(unit)")
             stat("Avg pace", "\(RouteMath.paceText(run.avgPace)) /\(unit)")
             stat("Moving", runClock(run.movingSeconds))
-            stat("Avg HR", "\(workout.averageBPM)")
+            stat("Avg HR", workout.hasHeartRate ? "\(workout.averageBPM)" : "–")
             stat("Elevation", "+\(Int(run.elevationGain.rounded())) m")
             stat("Zone 2", zone2.map { "\($0)%" } ?? "–")
         }
