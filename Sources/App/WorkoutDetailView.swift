@@ -112,7 +112,7 @@ struct WorkoutDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
-                    storyFocus = .session
+                    storyFocus = .mainEvent
                 } label: {
                     Image(systemName: "square.and.arrow.up")
                 }
