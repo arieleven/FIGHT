@@ -258,7 +258,7 @@ struct StoryCard: View {
                         Text(m.score.map(String.init) ?? "--").font(.subheadline.weight(.bold)).monospacedDigit()
                             .foregroundStyle(MetricScore.color(for: m.score))
                     }
-                    ProgressView(value: Double(m.score ?? 0), total: 100).tint(MetricScore.color(for: m.score))
+                    ScoreBar(score: m.score)
                 }
             }
             if let g = data.gasTank {
@@ -313,6 +313,26 @@ struct StoryCard: View {
                 .lineLimit(1).minimumScaleFactor(0.6)
             Text(label).font(.caption).foregroundStyle(.white.opacity(0.6))
         }
+    }
+}
+
+/// A plain-shape progress bar. ProgressView is drawn by UIKit, which ImageRenderer
+/// can't capture (it comes out full-width and in a default tint), so cards use shapes only.
+struct ScoreBar: View {
+    let score: Int?
+
+    var body: some View {
+        let fraction = CGFloat(min(100, max(0, score ?? 0))) / 100
+        Capsule()
+            .fill(Color.white.opacity(0.15))
+            .frame(height: 6)
+            .overlay(alignment: .leading) {
+                GeometryReader { geo in
+                    Capsule()
+                        .fill(MetricScore.color(for: score))
+                        .frame(width: geo.size.width * fraction)
+                }
+            }
     }
 }
 
