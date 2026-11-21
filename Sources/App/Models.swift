@@ -122,30 +122,90 @@ struct FighterBio: Codable, Equatable {
         var id: String { rawValue }
     }
 
-    enum Division: String, Codable, CaseIterable, Identifiable {
-        case strawweight = "Strawweight", flyweight = "Flyweight", bantamweight = "Bantamweight"
-        case featherweight = "Featherweight", lightweight = "Lightweight", welterweight = "Welterweight"
-        case middleweight = "Middleweight", lightHeavyweight = "Light Heavyweight", heavyweight = "Heavyweight"
+    /// One weight class under a rule set. limitKg nil = no upper limit (heavyweight).
+    struct WeightClass: Identifiable, Equatable {
+        let name: String
+        let limitKg: Double?
+        var id: String { name }
+    }
+
+    /// Weight-class standards differ by sport: a K-1 middleweight is 75 kg, a UFC one 83.9 kg.
+    enum WeightRules: String, Codable, CaseIterable, Identifiable {
+        case mma = "MMA (Unified)"
+        case boxing = "Boxing"
+        case muayThai = "Muay Thai (WBC)"
+        case k1 = "K-1"
+        case glory = "GLORY Kickboxing"
         var id: String { rawValue }
 
-        /// Upper weight limit in kg (unified MMA rules).
-        var limitKg: Double {
+        private static let boxingClasses: [WeightClass] = [
+            .init(name: "Minimumweight", limitKg: 47.6), .init(name: "Light Flyweight", limitKg: 49.0),
+            .init(name: "Flyweight", limitKg: 50.8), .init(name: "Super Flyweight", limitKg: 52.2),
+            .init(name: "Bantamweight", limitKg: 53.5), .init(name: "Super Bantamweight", limitKg: 55.3),
+            .init(name: "Featherweight", limitKg: 57.2), .init(name: "Super Featherweight", limitKg: 59.0),
+            .init(name: "Lightweight", limitKg: 61.2), .init(name: "Super Lightweight", limitKg: 63.5),
+            .init(name: "Welterweight", limitKg: 66.7), .init(name: "Super Welterweight", limitKg: 69.9),
+            .init(name: "Middleweight", limitKg: 72.6), .init(name: "Super Middleweight", limitKg: 76.2),
+            .init(name: "Light Heavyweight", limitKg: 79.4), .init(name: "Cruiserweight", limitKg: 90.7),
+            .init(name: "Heavyweight", limitKg: nil)
+        ]
+
+        var classes: [WeightClass] {
             switch self {
-            case .strawweight: return 52.2
-            case .flyweight: return 56.7
-            case .bantamweight: return 61.2
-            case .featherweight: return 65.8
-            case .lightweight: return 70.3
-            case .welterweight: return 77.1
-            case .middleweight: return 83.9
-            case .lightHeavyweight: return 93.0
-            case .heavyweight: return 120.2
+            case .mma:
+                return [
+                    .init(name: "Strawweight", limitKg: 52.2), .init(name: "Flyweight", limitKg: 56.7),
+                    .init(name: "Bantamweight", limitKg: 61.2), .init(name: "Featherweight", limitKg: 65.8),
+                    .init(name: "Lightweight", limitKg: 70.3), .init(name: "Welterweight", limitKg: 77.1),
+                    .init(name: "Middleweight", limitKg: 83.9), .init(name: "Light Heavyweight", limitKg: 93.0),
+                    .init(name: "Heavyweight", limitKg: 120.2)
+                ]
+            case .boxing, .muayThai:
+                return Self.boxingClasses
+            case .k1:
+                return [
+                    .init(name: "Flyweight", limitKg: 52), .init(name: "Super Bantamweight", limitKg: 55),
+                    .init(name: "Featherweight", limitKg: 57.5), .init(name: "Super Featherweight", limitKg: 60),
+                    .init(name: "Lightweight", limitKg: 62.5), .init(name: "Super Lightweight", limitKg: 65),
+                    .init(name: "Welterweight", limitKg: 67.5), .init(name: "Super Welterweight", limitKg: 70),
+                    .init(name: "Middleweight", limitKg: 75), .init(name: "Cruiserweight", limitKg: 90),
+                    .init(name: "Heavyweight", limitKg: nil)
+                ]
+            case .glory:
+                return [
+                    .init(name: "Featherweight", limitKg: 65), .init(name: "Lightweight", limitKg: 70),
+                    .init(name: "Welterweight", limitKg: 77), .init(name: "Middleweight", limitKg: 85),
+                    .init(name: "Light Heavyweight", limitKg: 95), .init(name: "Heavyweight", limitKg: nil)
+                ]
             }
         }
 
-        /// The lightest division a fight weight fits into.
-        static func suggested(forKg kg: Double) -> Division {
-            allCases.first { kg <= $0.limitKg + 0.05 } ?? .heavyweight
+        /// The usual standard for a discipline.
+        static func forDiscipline(_ d: String) -> WeightRules {
+            switch d {
+            case "MMA", "BJJ", "Wrestling": return .mma
+            case "Boxing": return .boxing
+            case "Muay Thai": return .muayThai
+            case "K-1": return .k1
+            case "Kickboxing": return .glory
+            default: return .k1
+            }
+        }
+
+        /// The lightest class a fight weight fits into.
+        func suggested(forKg kg: Double) -> WeightClass {
+            classes.first { ($0.limitKg ?? .infinity) + 0.05 >= kg } ?? classes[classes.count - 1]
+        }
+
+        func weightClass(named name: String?) -> WeightClass? {
+            classes.first { $0.name == name }
+        }
+
+        /// "70.3 kg", or "+90.7 kg" for an unlimited class.
+        func limitText(_ c: WeightClass, imperial: Bool) -> String {
+            if let l = c.limitKg { return WeightUnits.text(l, imperial) }
+            let prev = classes.compactMap(\.limitKg).max() ?? 0
+            return "+" + WeightUnits.text(prev, imperial)
         }
     }
 
@@ -155,8 +215,10 @@ struct FighterBio: Codable, Equatable {
     var losses = 0
     var draws = 0
     var finishes = 0
-    /// nil = suggest from the fight-weight target.
-    var division: Division?
+    /// nil = the usual standard for the discipline.
+    var rules: WeightRules?
+    /// Chosen class name under the rules; nil = suggest from the fight-weight target.
+    var divisionName: String?
     var reachCm: Double?
     var gym = ""
     /// ISO region code, e.g. "IL", "GB".
@@ -166,6 +228,13 @@ struct FighterBio: Codable, Equatable {
     var showFightFitness = true
     var showGasTank = true
     var showBestRecovery = true
+
+    var effectiveRules: WeightRules { rules ?? .forDiscipline(discipline) }
+
+    /// The chosen class, or the one the fight weight fits.
+    func weightClass(fightWeightKg: Double) -> WeightClass {
+        effectiveRules.weightClass(named: divisionName) ?? effectiveRules.suggested(forKg: fightWeightKg)
+    }
 
     var record: String { "\(wins)-\(losses)-\(draws)" }
 
@@ -189,7 +258,8 @@ struct FighterBio: Codable, Equatable {
         losses = (try? c.decodeIfPresent(Int.self, forKey: .losses)) ?? 0
         draws = (try? c.decodeIfPresent(Int.self, forKey: .draws)) ?? 0
         finishes = (try? c.decodeIfPresent(Int.self, forKey: .finishes)) ?? 0
-        division = try? c.decodeIfPresent(Division.self, forKey: .division)
+        rules = try? c.decodeIfPresent(WeightRules.self, forKey: .rules)
+        divisionName = (try? c.decodeIfPresent(String.self, forKey: .divisionName)) ?? nil
         reachCm = try? c.decodeIfPresent(Double.self, forKey: .reachCm)
         gym = (try? c.decodeIfPresent(String.self, forKey: .gym)) ?? ""
         country = (try? c.decodeIfPresent(String.self, forKey: .country)) ?? ""
@@ -201,7 +271,7 @@ struct FighterBio: Codable, Equatable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case nickname, level, wins, losses, draws, finishes, division, reachCm, gym, country, discipline
+        case nickname, level, wins, losses, draws, finishes, rules, divisionName, reachCm, gym, country, discipline
         case corner, showFightFitness, showGasTank, showBestRecovery
     }
 }

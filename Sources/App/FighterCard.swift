@@ -45,8 +45,8 @@ struct FighterProfileCard: View {
     private func heavy(_ s: CGFloat) -> Font { .system(size: s, weight: .heavy).width(.compressed) }
     private func cond(_ s: CGFloat, _ w: Font.Weight = .semibold) -> Font { .system(size: s, weight: w).width(.condensed) }
 
-    private var division: FighterBio.Division {
-        bio.division ?? .suggested(forKg: profile.targetFightWeightKg)
+    private var division: FighterBio.WeightClass {
+        bio.weightClass(fightWeightKg: profile.targetFightWeightKg)
     }
 
     private var displayName: String {
@@ -120,7 +120,7 @@ struct FighterProfileCard: View {
             .padding(.bottom, 12)
         }
         .overlay(alignment: .topLeading) {
-            Text("\(division.rawValue.uppercased()) · \(bio.level.rawValue.uppercased())")
+            Text("\(division.name.uppercased()) · \(bio.level.rawValue.uppercased())")
                 .font(cond(12, .bold))
                 .tracking(0.5)
                 .foregroundStyle(bio.corner == .gold ? Color.black : Color.white)
@@ -161,7 +161,7 @@ struct FighterProfileCard: View {
             Detail(label: "Reach", value: reachText),
             Detail(label: "Stance", value: profile.bagPreferences.stance.rawValue),
             Detail(label: "Age", value: "\(profile.age)"),
-            Detail(label: "Weight", value: "\(WeightUnits.number(division.limitKg, profile.useImperial)) \(WeightUnits.unit(profile.useImperial))"),
+            Detail(label: "Weight", value: bio.effectiveRules.limitText(division, imperial: profile.useImperial)),
             Detail(label: "Gym", value: bio.gym.isEmpty ? "—" : bio.gym)
         ]
     }
@@ -237,7 +237,7 @@ struct FighterCardRow: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Fighter Card").font(.headline).foregroundStyle(.primary)
-                    Text("\(p.bio.record) · \((p.bio.division ?? .suggested(forKg: p.targetFightWeightKg)).rawValue)")
+                    Text("\(p.bio.record) · \(p.bio.weightClass(fightWeightKg: p.targetFightWeightKg).name)")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -328,11 +328,19 @@ struct FighterCardEditor: View {
                 }
 
                 Section {
-                    Picker("Division", selection: $draft.bio.division) {
-                        Text("Auto (\(FighterBio.Division.suggested(forKg: draft.targetFightWeightKg).rawValue))")
-                            .tag(Optional<FighterBio.Division>.none)
-                        ForEach(FighterBio.Division.allCases) { d in
-                            Text("\(d.rawValue) · \(WeightUnits.text(d.limitKg, draft.useImperial))").tag(Optional(d))
+                    Picker("Weight classes", selection: $draft.bio.rules) {
+                        Text("Auto (\(FighterBio.WeightRules.forDiscipline(draft.bio.discipline).rawValue))")
+                            .tag(Optional<FighterBio.WeightRules>.none)
+                        ForEach(FighterBio.WeightRules.allCases) { r in
+                            Text(r.rawValue).tag(Optional(r))
+                        }
+                    }
+                    Picker("Division", selection: $draft.bio.divisionName) {
+                        let rules = draft.bio.effectiveRules
+                        Text("Auto (\(rules.suggested(forKg: draft.targetFightWeightKg).name))")
+                            .tag(Optional<String>.none)
+                        ForEach(rules.classes) { c in
+                            Text("\(c.name) · \(rules.limitText(c, imperial: draft.useImperial))").tag(Optional(c.name))
                         }
                     }
                     Stepper(value: reachBinding, in: reachRange, step: draft.heightImperial ? HeightUnits.cmPerInch : 1) {
@@ -345,7 +353,7 @@ struct FighterCardEditor: View {
                 } header: {
                     Text("Tale of the tape")
                 } footer: {
-                    Text("Height, age, stance and weight come from your profile. Auto division uses your fight-weight target.")
+                    Text("Weight classes follow your discipline's usual standard (a K-1 middleweight is 75 kg, an MMA one 83.9 kg). Auto division uses your fight-weight target.")
                 }
 
                 Section {
@@ -381,6 +389,10 @@ struct FighterCardEditor: View {
                 }
             }
             .sheet(isPresented: $sharing) { StoryShareSheet(focus: .profile) }
+            .onChange(of: draft.bio.effectiveRules) { _, rules in
+                // A division name from another standard doesn't carry over.
+                if rules.weightClass(named: draft.bio.divisionName) == nil { draft.bio.divisionName = nil }
+            }
             .onChange(of: photoItem) { _, item in
                 Task {
                     guard let item, let d = try? await item.loadTransferable(type: Data.self), let img = UIImage(data: d) else { return }

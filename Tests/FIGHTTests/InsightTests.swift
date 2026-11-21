@@ -280,11 +280,30 @@ final class FighterBioTests: XCTestCase {
         XCTAssertEqual(FighterBio.flag("123"), "")
     }
 
-    func testDivisionSuggestedFromFightWeight() {
-        XCTAssertEqual(FighterBio.Division.suggested(forKg: 70.0), .lightweight)
-        XCTAssertEqual(FighterBio.Division.suggested(forKg: 70.3), .lightweight)
-        XCTAssertEqual(FighterBio.Division.suggested(forKg: 72), .welterweight)
-        XCTAssertEqual(FighterBio.Division.suggested(forKg: 150), .heavyweight)
+    func testDivisionsFollowEachSportsStandard() {
+        typealias R = FighterBio.WeightRules
+        XCTAssertEqual(R.mma.suggested(forKg: 70.0).name, "Lightweight")
+        XCTAssertEqual(R.mma.suggested(forKg: 72).name, "Welterweight")
+        XCTAssertEqual(R.mma.suggested(forKg: 150).name, "Heavyweight")
+        // Same 75 kg fighter, different standards.
+        XCTAssertEqual(R.k1.suggested(forKg: 75).name, "Middleweight")
+        XCTAssertEqual(R.mma.suggested(forKg: 75).name, "Welterweight")
+        XCTAssertEqual(R.boxing.suggested(forKg: 75).name, "Super Middleweight")
+        XCTAssertEqual(R.glory.suggested(forKg: 75).name, "Welterweight")
+        XCTAssertEqual(R.k1.suggested(forKg: 120).name, "Heavyweight")
+        XCTAssertNil(R.k1.suggested(forKg: 120).limitKg)
+        XCTAssertEqual(R.k1.limitText(R.k1.suggested(forKg: 120), imperial: false), "+90.0 kg")
+        XCTAssertEqual(R.forDiscipline("Muay Thai"), .muayThai)
+        XCTAssertEqual(R.forDiscipline("MMA"), .mma)
+    }
+
+    func testChosenDivisionResetsToAutoUnderAnotherStandard() {
+        var bio = FighterBio()
+        bio.discipline = "K-1"
+        bio.divisionName = "Super Welterweight"
+        XCTAssertEqual(bio.weightClass(fightWeightKg: 80).name, "Super Welterweight")
+        bio.rules = .mma
+        XCTAssertEqual(bio.weightClass(fightWeightKg: 80).name, "Middleweight", "no MMA super welterweight, so it falls back to the suggestion")
     }
 
     func testRecordAndOldProfilesWithoutBio() throws {
