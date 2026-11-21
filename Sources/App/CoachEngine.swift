@@ -573,19 +573,21 @@ enum CoachEngine {
                                        workouts: [SavedWorkout], profile: AthleteProfile, now: Date) -> MetricScore {
         let form = load.last?.form
         let today = readings.first.flatMap { now.timeIntervalSince($0.date) < 18 * 3600 ? $0 : nil }
-        let baseline = readings.dropFirst().prefix(14)
 
-        var hrvZ: Double?
-        if let ln = today?.lnRMSSD {
-            let base = baseline.compactMap(\.lnRMSSD)
-            if base.count >= 3, let m = mean(base), let s = sd(base), s > 0 { hrvZ = (ln - m) / s }
-        }
+        let hrvZ = today.flatMap { hrvSignal(today: $0, readings: readings, now: now) }
         var rhrDelta: Double?
         if let t = today {
-            let base = baseline.map { Double($0.restingHR) }
+            // Resting HR against the last 30 days (by date, not by count).
+            let base = readings.filter { $0.id != t.id && now.timeIntervalSince($0.date) < 30 * 86400 }.map { Double($0.restingHR) }
             if base.count >= 3, let m = mean(base) { rhrDelta = Double(t.restingHR) - m }
         }
-        let subjective = today.flatMap { $0.hasSelfRatings ? Double($0.sleepQuality + (6 - $0.soreness)) : nil }
+        // Self-ratings, with last night's measured sleep from Apple Health when there is one.
+        var subjective = today.flatMap { $0.hasSelfRatings ? Double($0.sleepQuality + (6 - $0.soreness)) : nil }
+        if let t = today, let h = t.sleepHours {
+            let sleepPoints = min(5, max(1, (h - 4.5) / 3.5 * 4 + 1))
+            subjective = Double(6 - t.soreness) + (sleepPoints + Double(t.hasSelfRatings ? t.sleepQuality : Int(sleepPoints))) / 2
+        }
+        let jump = today.flatMap { jumpRatio(today: $0, readings: readings) }
         let lastHard = workouts.first { isHardSession($0, profile: profile) }
         let hoursSinceHard = lastHard.map { now.timeIntervalSince($0.endDate) / 3600 }
 
@@ -594,12 +596,14 @@ enum CoachEngine {
             (hrvZ.map { scale($0, worst: -2, best: 0.5) }, 0.25),
             (rhrDelta.map { scale($0, worst: 8, best: -2) }, 0.15),
             (subjective.map { scale($0, worst: 2, best: 10) }, 0.15),
-            (hoursSinceHard.map { scale($0, worst: 12, best: 48) }, 0.15)
+            (hoursSinceHard.map { scale($0, worst: 12, best: 48) }, 0.15),
+            (jump.map { scale($0, worst: 0.85, best: 1.02) }, 0.10)
         ])
 
         var evidence: [String] = []
         if let f = form { evidence.append(String(format: "Form %+.0f (negative = carrying fatigue)", f)) }
-        if let z = hrvZ { evidence.append(String(format: "HRV today %+.1f SD vs your baseline", z)) }
+        if let z = hrvZ { evidence.append(String(format: "HRV trend %+.1f SD vs your normal range", z)) }
+        if let j = jump { evidence.append(String(format: "Jump %+.0f%% vs usual", (j - 1) * 100)) }
         if let d = rhrDelta { evidence.append(String(format: "Resting HR %+.0f BPM vs baseline", d)) }
         if let t = today, t.hasSelfRatings { evidence.append("Sleep \(t.sleepQuality)/5 • Soreness \(t.soreness)/5") }
         if let h = hoursSinceHard { evidence.append(String(format: "%.0f h since last hard session", h)) }
@@ -618,6 +622,37 @@ enum CoachEngine {
             howToImprove: "Readiness reflects recent load, HRV, resting HR, sleep and soreness. Do the 2-minute check each morning before coffee, measured the same way each time, for the most accurate trend.",
             dataHint: "Record a workout or a readiness check."
         )
+    }
+
+    /// HRV readiness the sports-science way (Plews / Buchheit): the 7-day average of ln RMSSD
+    /// against your normal range over the 8–60 days before, in units of that range's spread,
+    /// blended with today's single reading. Small wobbles (under half an SD) count as normal.
+    /// Falls back to today vs the last 14 readings while the history is short.
+    static func hrvSignal(today: ReadinessReading, readings: [ReadinessReading], now: Date) -> Double? {
+        guard let ln = today.lnRMSSD else { return nil }
+        func age(_ r: ReadinessReading) -> Double { now.timeIntervalSince(r.date) / 86400 }
+        let week = readings.filter { age($0) < 7 }.compactMap(\.lnRMSSD)
+        let history = readings.filter { age($0) >= 7 && age($0) < 60 }.compactMap(\.lnRMSSD)
+        if history.count >= 7, week.count >= 3, let m = mean(history), let sdv = sd(history), sdv > 0,
+           let w = mean(week) {
+            func z(_ v: Double) -> Double {
+                let d = v - m
+                return abs(d) < 0.5 * sdv ? 0 : d / sdv      // inside the smallest worthwhile change
+            }
+            return 0.6 * z(w) + 0.4 * z(ln)
+        }
+        let base = readings.filter { $0.id != today.id }.prefix(14).compactMap(\.lnRMSSD)
+        guard base.count >= 3, let m = mean(base), let sdv = sd(base), sdv > 0 else { return nil }
+        return (ln - m) / sdv
+    }
+
+    /// Today's morning jump vs the usual (1.0 = normal), nil without 3+ earlier tests.
+    static func jumpRatio(today: ReadinessReading, readings: [ReadinessReading]) -> Double? {
+        guard let j = today.jumpCm else { return nil }
+        let past = readings.filter { $0.id != today.id }.compactMap(\.jumpCm).prefix(14)
+        guard past.count >= 3 else { return nil }
+        let avg = past.reduce(0, +) / Double(past.count)
+        return avg > 0 ? j / avg : nil
     }
 
     private static func diff(_ a: Int?, _ b: Int?) -> Int? {

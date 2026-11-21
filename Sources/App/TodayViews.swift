@@ -3,13 +3,18 @@ import SwiftUI
 /// The top of the Today tab: what to do today, one insight, your goal, and today's review.
 struct TodayCard: View {
     @EnvironmentObject var workoutStore: WorkoutStore
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
     @EnvironmentObject var navigation: AppNavigation
 
-    @State private var report: CoachReport?
-    @State private var insight: String?
     @State private var showingCheck = false
-    @State private var loadedKey = ""
+
+    /// Shared report, computed once in the background by the store.
+    private var report: CoachReport? {
+        workoutStore.coachProfileID == workoutStore.activeProfileID ? workoutStore.coachReport : nil
+    }
+    private var insight: String? {
+        report == nil ? nil : DailyInsight.pick(workoutStore.coachInsights.dailyCandidates)
+    }
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -57,8 +62,11 @@ struct TodayCard: View {
         }
         .card()
         .sheet(isPresented: $showingCheck, onDismiss: refresh) { ReadinessCheckView() }
-        .onAppear(perform: refreshIfNeeded)
-        .onChange(of: workoutStore.workouts.count) { _, _ in refresh() }
+        .onAppear(perform: refresh)
+        .onChange(of: workoutStore.workouts.count) { _, _ in
+            refresh()
+            WeeklyNudge.reschedule(store: workoutStore)
+        }
         .onChange(of: workoutStore.activeProfileID) { _, _ in refresh() }
     }
 
@@ -118,19 +126,8 @@ struct TodayCard: View {
         }
     }
 
-    private func refreshIfNeeded() {
-        let key = "\(workoutStore.activeProfileID)-\(workoutStore.workouts.count)-\(Calendar.current.component(.day, from: Date()))"
-        guard key != loadedKey else { return }
-        refresh()
-    }
-
     private func refresh() {
-        loadedKey = "\(workoutStore.activeProfileID)-\(workoutStore.workouts.count)-\(Calendar.current.component(.day, from: Date()))"
-        report = CoachEngine.buildReport(workouts: workoutStore.workouts, readings: workoutStore.activeReadings,
-                                         profile: workoutStore.activeProfile,
-                                         resolveSamples: { workoutStore.resolvedSamples(for: $0) })
-        insight = DailyInsight.pick(CoachInsights.build(store: workoutStore).dailyCandidates)
-        WeeklyNudge.reschedule(store: workoutStore)
+        workoutStore.refreshCoach()
     }
 }
 
@@ -138,7 +135,7 @@ struct TodayCard: View {
 struct AutoStartBanner: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
     @State private var highSince: Date?
     @State private var visible = false
     @State private var dismissedAt: Date?

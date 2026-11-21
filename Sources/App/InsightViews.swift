@@ -21,15 +21,21 @@ struct CoachInsights {
 
     @MainActor
     static func build(store: WorkoutStore) -> CoachInsights {
-        let profile = store.activeProfile
-        let mine = store.workouts.filter { $0.profileID == profile.id }
+        build(profile: store.activeProfile, workouts: store.workouts, readings: store.activeReadings,
+              soreness: store.soreness, resolveSamples: { store.resolvedSamples(for: $0) })
+    }
+
+    /// Pure version (safe off the main thread).
+    static func build(profile: AthleteProfile, workouts: [SavedWorkout], readings: [ReadinessReading],
+                      soreness: [SorenessEntry], resolveSamples: (SavedWorkout) -> [HeartRatePoint]) -> CoachInsights {
+        let mine = workouts.filter { $0.profileID == profile.id }
         var i = CoachInsights()
         i.gasTank = GasTank.evaluate(workouts: mine, profile: profile)
         i.comboCost = ComboCost.analyze(workouts: Array(mine.prefix(40)), stance: profile.bagPreferences.stance,
-                                        resolveSamples: { store.resolvedSamples(for: $0) })
-        i.drivers = PerformanceDrivers.analyze(workouts: store.workouts, readings: store.activeReadings, profile: profile)
-        i.sorenessPatterns = SorenessInsights.patterns(store.soreness, workouts: mine, profileID: profile.id)
-        i.activeSoreness = store.activeSoreness
+                                        resolveSamples: resolveSamples)
+        i.drivers = PerformanceDrivers.analyze(workouts: workouts, readings: readings, profile: profile)
+        i.sorenessPatterns = SorenessInsights.patterns(soreness, workouts: mine, profileID: profile.id)
+        i.activeSoreness = SorenessInsights.active(soreness, profileID: profile.id)
         i.benchmarkAttempts = Benchmark.attempts(mine)
         i.benchmarkDue = Benchmark.isDue(mine)
         i.breathing = BreathingEffect.compare(mine, profileID: profile.id)
@@ -249,7 +255,7 @@ struct BenchmarkCard: View {
 struct BreathingTrainerView: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
     @Environment(\.dismiss) private var dismiss
 
     @State private var minutes = 5

@@ -89,7 +89,7 @@ struct TrainingChoices: View {
 /// You tab: change disciplines, gear and plyo level in one place.
 struct TrainingSettingsView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
 
     var body: some View {
         let binding = Binding<AthleteProfile>(get: { workoutStore.activeProfile }, set: { new in

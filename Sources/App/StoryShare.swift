@@ -149,8 +149,7 @@ struct StoryData {
         d.profile = profile
         d.photo = store.fighterPhoto(for: profile.id)
         d.cardStats = FighterCardStats.current(store: store, profile: profile)
-        d.report = CoachEngine.buildReport(workouts: store.workouts, readings: store.activeReadings, profile: profile,
-                                           resolveSamples: { store.resolvedSamples(for: $0) })
+        d.report = store.coachReportNow()
         d.gasTank = GasTank.evaluate(workouts: mine, profile: profile)?.headline
         if let workout {
             d.workout = workout

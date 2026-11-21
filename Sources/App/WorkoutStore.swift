@@ -16,25 +16,79 @@ struct FoundFighter: Identifiable, Equatable {
 
 @MainActor
 final class WorkoutStore: ObservableObject {
-    @Published var workouts: [SavedWorkout] = []
-    @Published var profiles: [AthleteProfile] = []
+    @Published var workouts: [SavedWorkout] = [] { didSet { dataVersion &+= 1 } }
+    @Published var profiles: [AthleteProfile] = [] { didSet { dataVersion &+= 1 } }
     @Published var activeProfileID: UUID {
         didSet {
+            dataVersion &+= 1
             saveProfilesToDisk()
         }
     }
     @Published var savedGhostSessions: [GhostSession] = []
-    @Published var readinessReadings: [ReadinessReading] = []
+    @Published var readinessReadings: [ReadinessReading] = [] { didSet { dataVersion &+= 1 } }
     @Published var weighIns: [WeighIn] = []
     @Published var plans: [TrainingPlan] = []
-    @Published var soreness: [SorenessEntry] = []
+    @Published var soreness: [SorenessEntry] = [] { didSet { dataVersion &+= 1 } }
+
+    // MARK: Shared coach report (computed once, in the background)
+
+    /// Bumped whenever anything the coach reads changes.
+    private var dataVersion = 0
+    /// The coach's report and insights for the active fighter. Today, Progress, the fighter card
+    /// and story cards all read these instead of each recomputing them on the main thread.
+    @Published private(set) var coachReport: CoachReport?
+    @Published private(set) var coachInsights = CoachInsights()
+    @Published private(set) var coachProfileID: UUID?
+    private var coachKey = ""
+    private var coachTask: Task<Void, Never>?
+
+    /// The cached report when it's for the active fighter, otherwise computed right now.
+    func coachReportNow() -> CoachReport {
+        if let r = coachReport, coachProfileID == activeProfileID { return r }
+        return CoachEngine.buildReport(workouts: workouts, readings: activeReadings, profile: activeProfile,
+                                       resolveSamples: { self.resolvedSamples(for: $0) })
+    }
+
+    /// Recomputes the coach report if data changed since the last time (cheap to call often).
+    func refreshCoach(force: Bool = false) {
+        let day = Calendar.current.ordinality(of: .day, in: .era, for: Date()) ?? 0
+        let drills = DrillHistory.load(activeProfileID).count
+        let key = "\(activeProfileID)-\(dataVersion)-\(day)-\(drills)"
+        guard force || key != coachKey else { return }
+        coachKey = key
+        let profile = activeProfile
+        let all = workouts
+        let readings = activeReadings
+        let sore = soreness
+        let resolve = Self.samplesResolver(archives: archivesDirectory)
+        if coachProfileID != profile.id { coachReport = nil }
+        coachTask?.cancel()
+        coachTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)   // let a burst of edits settle
+            guard !Task.isCancelled else { return }
+            let result = await Task.detached(priority: .userInitiated) {
+                CoachSnapshot(
+                    report: CoachEngine.buildReport(workouts: all, readings: readings, profile: profile, resolveSamples: resolve),
+                    insights: CoachInsights.build(profile: profile, workouts: all, readings: readings,
+                                                  soreness: sore, resolveSamples: resolve))
+            }.value
+            guard let self, !Task.isCancelled, self.coachKey == key else { return }
+            self.coachReport = result.report
+            self.coachInsights = result.insights
+            self.coachProfileID = profile.id
+        }
+    }
     /// Recently Deleted.
     @Published var trash: [SavedWorkout] = []
     @Published var deletedProfiles: [DeletedProfile] = []
     // Cached so the Live tab doesn't decompress archives on every BPM-driven redraw.
-    private var cachedGhosts: [GhostSession] = []
+    /// Built on first use (only when the ghost picker opens) and cleared when sessions change.
+    private var cachedGhosts: [GhostSession]?
+    private var cachedGhostsProfile: UUID?
 
-    private let archiveThresholdDays: TimeInterval = 7 * 24 * 60 * 60
+    /// Heart-rate samples go to a compressed archive as soon as a session is saved, so the
+    /// session list (read at launch) stays tiny and samples load only when needed.
+    private let archiveThresholdDays: TimeInterval = 0
 
     var activeProfile: AthleteProfile {
         get {
@@ -54,8 +108,28 @@ final class WorkoutStore: ObservableObject {
             } else {
                 profiles.append(clean)
             }
-            saveProfilesToDisk()
+            scheduleProfileSave()
         }
+    }
+
+    private var pendingProfileSave: Task<Void, Never>?
+
+    /// Typing in settings changes the profile on every keystroke; write the file once things settle.
+    private func scheduleProfileSave() {
+        pendingProfileSave?.cancel()
+        pendingProfileSave = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            guard !Task.isCancelled else { return }
+            self?.saveProfilesToDisk()
+        }
+    }
+
+    /// Writes anything still waiting (called when the app goes to the background).
+    func flushPendingSaves() {
+        guard pendingProfileSave != nil else { return }
+        pendingProfileSave?.cancel()
+        pendingProfileSave = nil
+        saveProfilesToDisk()
     }
 
     var documentsDirectory: URL {
@@ -136,6 +210,8 @@ final class WorkoutStore: ObservableObject {
     }
 
     func saveProfilesToDisk() {
+        pendingProfileSave?.cancel()
+        pendingProfileSave = nil
         let container = ProfileContainer(activeProfileID: activeProfileID, profiles: profiles, deleted: deletedProfiles)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -274,7 +350,7 @@ final class WorkoutStore: ObservableObject {
     func save(_ workout: SavedWorkout) {
         var w = workout
         let age = Date().timeIntervalSince(w.startDate)
-        if age > archiveThresholdDays && !w.samples.isEmpty {
+        if age >= archiveThresholdDays && !w.samples.isEmpty {
             w = compressWorkoutSamples(w)
         }
         writeWorkoutMetadata(w)
@@ -392,14 +468,16 @@ final class WorkoutStore: ObservableObject {
             return workout.samples
         }
         guard let archiveName = workout.archiveFileName else { return [] }
-        let archiveURL = archivesDirectory.appendingPathComponent(archiveName)
-        guard let compressed = try? Data(contentsOf: archiveURL),
-              let decompressed = decompressLZFSE(compressed) else {
-            return []
+        return SampleArchive.load(archivesDirectory.appendingPathComponent(archiveName), id: workout.id)
+    }
+
+    /// Resolves samples off the main thread (for background analysis).
+    nonisolated static func samplesResolver(archives: URL) -> @Sendable (SavedWorkout) -> [HeartRatePoint] {
+        { w in
+            if !w.samples.isEmpty { return w.samples }
+            guard let name = w.archiveFileName else { return [] }
+            return SampleArchive.load(archives.appendingPathComponent(name), id: w.id)
         }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return (try? decoder.decode([HeartRatePoint].self, from: decompressed)) ?? []
     }
 
     func runLosslessAutoCompression() {
@@ -408,7 +486,7 @@ final class WorkoutStore: ObservableObject {
 
         for i in workouts.indices {
             let age = now.timeIntervalSince(workouts[i].startDate)
-            if age > archiveThresholdDays && !workouts[i].isCompressedArchive && !workouts[i].samples.isEmpty {
+            if age >= archiveThresholdDays && !workouts[i].isCompressedArchive && !workouts[i].samples.isEmpty {
                 workouts[i] = compressWorkoutSamples(workouts[i])
                 writeWorkoutMetadata(workouts[i])
                 didChange = true
@@ -430,6 +508,7 @@ final class WorkoutStore: ObservableObject {
         let archiveName = "\(workout.id.uuidString).fpk"
         let archiveURL = archivesDirectory.appendingPathComponent(archiveName)
         try? compressed.write(to: archiveURL, options: .atomic)
+        SampleArchive.remember(workout.samples, id: workout.id)
 
         copy.samples = []
         copy.isCompressedArchive = true
@@ -439,7 +518,6 @@ final class WorkoutStore: ObservableObject {
 
     private func writeWorkoutMetadata(_ workout: SavedWorkout) {
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
         let url = workoutsDirectory.appendingPathComponent("\(workout.id.uuidString).json")
         if let data = try? encoder.encode(workout) {
@@ -463,7 +541,7 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
-    private func decompressLZFSE(_ data: Data) -> Data? {
+    nonisolated static func decompressLZFSE(_ data: Data) -> Data? {
         guard data.count > 4 else { return nil }
         let originalSize = UInt32(littleEndian: data.prefix(4).withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
         let payload = data.dropFirst(4)
@@ -531,11 +609,20 @@ final class WorkoutStore: ObservableObject {
     }
 
     func allAvailableGhosts() -> [GhostSession] {
-        cachedGhosts
+        if let cached = cachedGhosts, cachedGhostsProfile == activeProfileID { return cached }
+        let built = buildGhosts()
+        cachedGhosts = built
+        cachedGhostsProfile = activeProfileID
+        return built
     }
 
     private func refreshGhostCache() {
-        let fromWorkouts = workouts.prefix(15).map { w -> GhostSession in
+        cachedGhosts = nil
+    }
+
+    /// The active fighter's 15 latest sessions plus imported ghosts.
+    private func buildGhosts() -> [GhostSession] {
+        let fromWorkouts = workouts.lazy.filter { $0.profileID == self.activeProfileID }.prefix(15).map { w -> GhostSession in
             var g = w.toGhostSession()
             if g.samples.isEmpty {
                 let resolved = resolvedSamples(for: w)
@@ -552,7 +639,7 @@ final class WorkoutStore: ObservableObject {
             return g
         }.filter { !$0.samples.isEmpty }
 
-        cachedGhosts = savedGhostSessions + fromWorkouts
+        return savedGhostSessions + Array(fromWorkouts)
     }
 
     func exportTCXFile(for workout: SavedWorkout) -> URL {
@@ -919,4 +1006,35 @@ final class TCXStreamParser: NSObject, XMLParserDelegate {
             }
         }
     }
+}
+
+/// Decompressed heart-rate samples, kept in memory so the same session isn't unpacked
+/// again and again (coach report, insights, ghosts, detail view). Safe from any thread.
+enum SampleArchive {
+    private final class Box { let samples: [HeartRatePoint]; init(_ s: [HeartRatePoint]) { samples = s } }
+    private static let cache: NSCache<NSUUID, Box> = {
+        let c = NSCache<NSUUID, Box>()
+        c.countLimit = 60
+        return c
+    }()
+
+    static func remember(_ samples: [HeartRatePoint], id: UUID) {
+        cache.setObject(Box(samples), forKey: id as NSUUID)
+    }
+
+    static func load(_ url: URL, id: UUID) -> [HeartRatePoint] {
+        if let hit = cache.object(forKey: id as NSUUID) { return hit.samples }
+        guard let compressed = try? Data(contentsOf: url),
+              let raw = WorkoutStore.decompressLZFSE(compressed) else { return [] }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let samples = (try? decoder.decode([HeartRatePoint].self, from: raw)) ?? []
+        if !samples.isEmpty { remember(samples, id: id) }
+        return samples
+    }
+}
+
+struct CoachSnapshot {
+    let report: CoachReport
+    let insights: CoachInsights
 }

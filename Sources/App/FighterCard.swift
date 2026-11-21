@@ -12,8 +12,10 @@ struct FighterCardStats {
     @MainActor
     static func current(store: WorkoutStore, profile: AthleteProfile) -> FighterCardStats {
         let mine = store.workouts.filter { $0.profileID == profile.id }
-        let report = CoachEngine.buildReport(workouts: store.workouts, readings: store.activeReadings, profile: profile,
-                                             resolveSamples: { store.resolvedSamples(for: $0) })
+        let report = profile.id == store.activeProfileID
+            ? store.coachReportNow()
+            : CoachEngine.buildReport(workouts: store.workouts, readings: store.activeReadings, profile: profile,
+                                      resolveSamples: { store.resolvedSamples(for: $0) })
         let best = Records.bestRecovery(workouts: store.workouts, profileID: profile.id)
         return FighterCardStats(fightFitness: report.hasEnoughData ? report.fightFitness : nil,
                                 gasTank: GasTank.evaluate(workouts: mine, profile: profile)?.headline,

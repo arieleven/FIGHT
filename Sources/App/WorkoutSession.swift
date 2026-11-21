@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 import UIKit
 import ActivityKit
@@ -49,6 +50,7 @@ struct WorkoutDraft: Codable {
     var breathingGuided: Bool?
     var impactsCount: Int?
     var jumps: [Double]?
+    var activity: [ActivityPoint]?
 }
 
 enum WorkoutFinalizer {
@@ -56,7 +58,7 @@ enum WorkoutFinalizer {
     static func makeWorkout(from d: WorkoutDraft, profile: AthleteProfile, ghost: GhostSession?, end: Date) -> SavedWorkout {
         let steadyKinds: [WorkoutCategory] = [.walk, .roadwork, .lthrTest]
         let detected = d.rounds.isEmpty && !steadyKinds.contains(d.category)
-            ? AutoRounds.detect(samples: d.samples, profile: profile) : []
+            ? AutoRounds.detect(samples: d.samples, activity: d.activity ?? [], profile: profile) : []
         let rounds = d.rounds.isEmpty ? detected : d.rounds
         let bpms = d.samples.map(\.bpm)
         let avg = bpms.isEmpty ? 0 : bpms.reduce(0, +) / bpms.count
@@ -135,77 +137,78 @@ enum WorkoutFinalizer {
 /// Owns a live workout: timing, rounds, bag coach, coaching cues, autosave and
 /// saving. Lives for the whole app session, so switching tabs never disturbs it.
 @MainActor
-final class WorkoutSession: ObservableObject {
+@Observable
+final class WorkoutSession {
     let audio = AudioCoachEngine()
     let headMotion = HeadMotionTracker()
 
     /// The app's live session, for Siri and Shortcuts.
     static weak var shared: WorkoutSession?
 
-    private var ble: BLEHeartRateManager?
-    private var store: WorkoutStore?
-    private var health: HealthKitManager?
+    @ObservationIgnored private var ble: BLEHeartRateManager?
+    @ObservationIgnored private var store: WorkoutStore?
+    @ObservationIgnored private var health: HealthKitManager?
 
     // MARK: Setup state
-    @Published var selectedCategory: WorkoutCategory = .muayThai {
+    var selectedCategory: WorkoutCategory = .muayThai {
         didSet {
             guard oldValue != selectedCategory, !suppressDefaults else { return }
             applyDisciplineDefaults(selectedCategory)
         }
     }
-    @Published var selectedDrillTag: DrillTag = .technical
-    @Published var workoutNotes: String = ""
-    @Published var roundTimerEnabled = true
-    @Published var workDurationSeconds = 180
-    @Published var restDurationSeconds = 60
-    @Published var bagEnabled = false {
+    var selectedDrillTag: DrillTag = .technical
+    var workoutNotes: String = ""
+    var roundTimerEnabled = true
+    var workDurationSeconds = 180
+    var restDurationSeconds = 60
+    var bagEnabled = false {
         didSet {
             guard oldValue != bagEnabled else { return }
             bagEnabledChanged()
         }
     }
-    @Published var bagPrefs = BagPreferences() {
+    var bagPrefs = BagPreferences() {
         didSet {
             guard oldValue != bagPrefs, !loadingPrefs else { return }
             bagPrefsChanged(old: oldValue)
         }
     }
-    @Published var selectedGhost: GhostSession?
-    @Published var activePlan: WorkoutPrescription?
+    var selectedGhost: GhostSession?
+    var activePlan: WorkoutPrescription?
 
     // MARK: Live state
-    @Published private(set) var isRecording = false
-    @Published private(set) var startTime: Date?
-    @Published private(set) var elapsedSeconds: TimeInterval = 0
-    @Published private(set) var samples: [HeartRatePoint] = []
-    @Published private(set) var zoneSeconds: [Int: TimeInterval] = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
-    @Published private(set) var activeCalories: Double = 0
-    @Published private(set) var bmrCalories: Double = 0
-    @Published private(set) var currentRound = 1
-    @Published private(set) var isRestPeriod = false
-    @Published private(set) var phaseElapsed: TimeInterval = 0
-    @Published private(set) var completedRounds: [RoundStat] = []
-    @Published private(set) var autoHRREvents: [AutoHRREvent] = []
-    @Published private(set) var latestAutoHRRBanner: String?
-    @Published var lthrTestResultBanner: Int?
+    private(set) var isRecording = false
+    private(set) var startTime: Date?
+    private(set) var elapsedSeconds: TimeInterval = 0
+    private(set) var samples: [HeartRatePoint] = []
+    private(set) var zoneSeconds: [Int: TimeInterval] = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
+    private(set) var activeCalories: Double = 0
+    private(set) var bmrCalories: Double = 0
+    private(set) var currentRound = 1
+    private(set) var isRestPeriod = false
+    private(set) var phaseElapsed: TimeInterval = 0
+    private(set) var completedRounds: [RoundStat] = []
+    private(set) var autoHRREvents: [AutoHRREvent] = []
+    private(set) var latestAutoHRRBanner: String?
+    var lthrTestResultBanner: Int?
     /// Zones before the last LTHR test, so its result can be undone.
     private var previousThreshold: (lthr: Int, method: ZoneCalculationMethod)?
-    @Published private(set) var liveAlpha1: Double?
-    @Published private(set) var pendingRecoveryRemaining: Int?
-    @Published private(set) var bagSessionComplete = false
+    private(set) var liveAlpha1: Double?
+    private(set) var pendingRecoveryRemaining: Int?
+    private(set) var bagSessionComplete = false
 
     // MARK: Plan runner state
-    @Published private(set) var queuedPlan: TrainingPlan?
-    @Published private(set) var runningPlan: TrainingPlan?
-    @Published private(set) var planBlockIndex = 0
-    @Published private(set) var planBlockElapsed: TimeInterval = 0
-    @Published private(set) var planTransitionRemaining: TimeInterval?
-    @Published private(set) var planComplete = false
-    @Published private(set) var blockResults: [BlockResult] = []
+    private(set) var queuedPlan: TrainingPlan?
+    private(set) var runningPlan: TrainingPlan?
+    private(set) var planBlockIndex = 0
+    private(set) var planBlockElapsed: TimeInterval = 0
+    private(set) var planTransitionRemaining: TimeInterval?
+    private(set) var planComplete = false
+    private(set) var blockResults: [BlockResult] = []
     private var blockStartElapsed: TimeInterval = 0
     private var blockStartStrikes = 0
-    @Published private(set) var blockExtraRounds = 0
-    @Published private(set) var blockExtraSeconds = 0
+    private(set) var blockExtraRounds = 0
+    private(set) var blockExtraSeconds = 0
     /// Next time (block-elapsed seconds) a reaction call is spoken.
     private var nextCallAt: TimeInterval = 2
     private var roundNumberOffset = 0
@@ -213,14 +216,14 @@ final class WorkoutSession: ObservableObject {
     static let firstBlockLeadIn: TimeInterval = 8
 
     // MARK: Flow state
-    @Published var finishedWorkout: SavedWorkout?
-    @Published var showingSummary = false
-    @Published var requestFinishPrompt = false
-    @Published var recoverableDraft: WorkoutDraft?
+    var finishedWorkout: SavedWorkout?
+    var showingSummary = false
+    var requestFinishPrompt = false
+    var recoverableDraft: WorkoutDraft?
 
     // MARK: Private bookkeeping
     private var draftID = UUID()
-    private var timer: Timer?
+    @ObservationIgnored private var timer: Timer?
     private var lastTick: Date?
     private var lastDraftSave = Date.distantPast
     private var suppressDefaults = false
@@ -252,7 +255,7 @@ final class WorkoutSession: ObservableObject {
     private var lthrWarmupAnnounced = false
     private var finalRoundAnnounced = false
 
-    private var currentActivity: Activity<WorkoutActivityAttributes>?
+    @ObservationIgnored private var currentActivity: Activity<WorkoutActivityAttributes>?
     private var lastActivityPush = Date.distantPast
     private var lastActivityState: (bpm: Int, zone: Int, round: Int, rest: Bool)?
 
@@ -282,15 +285,18 @@ final class WorkoutSession: ObservableObject {
     private var chinCueGiven = false
     private var chinBaselineSet = false
     /// Bag hits heard by the microphone this session.
-    @Published private(set) var bagHits = 0
+    private(set) var bagHits = 0
     /// Jump heights (cm) measured by AirPods during plyo sets.
-    @Published private(set) var jumps: [Double] = []
-    @Published private(set) var setJumps: [Double] = []
+    private(set) var jumps: [Double] = []
+    private(set) var setJumps: [Double] = []
     private var qualityStopGiven = false
+    /// Movement per second (AirPods moves + bounces + bag hits), for finding rounds afterwards.
+    @ObservationIgnored private var activityTrail: [ActivityPoint] = []
+    @ObservationIgnored private var lastActivityTotal = 0
     private let debriefVoice = AVSpeechSynthesizer()
     private var strapLostSince: Date?
     /// Short-lived banner, e.g. "New record: recovery −38 BPM".
-    @Published private(set) var liveRecordBanner: String?
+    private(set) var liveRecordBanner: String?
 
     // MARK: Wiring
 
@@ -720,6 +726,7 @@ final class WorkoutSession: ObservableObject {
         guard !isRecording else { return }
         rememberSetup()
         draftID = UUID()
+        draftSamplesWritten = 0
         samples.removeAll()
         zoneSeconds = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]
         activeCalories = 0
@@ -777,6 +784,8 @@ final class WorkoutSession: ObservableObject {
         bagHits = 0
         jumps = []
         setJumps = []
+        activityTrail = []
+        lastActivityTotal = 0
         strapLostSince = nil
         if profile.trackHeadMovement {
             headMotion.start()
@@ -861,7 +870,14 @@ final class WorkoutSession: ObservableObject {
                 return 0
             }
         )
-        audio.startBagCoach(prefs: override ?? bagPrefs, context: context)
+        let prefsNow = override ?? bagPrefs
+        // Lean toward the technique you haven't drilled lately; on easy days, call your most
+        // expensive combos less so the heart rate stays where the session wants it.
+        let insights = store?.coachInsights
+        audio.focusStrikes = insights?.neglected.map { ComboGenerator.strikes(forFocus: $0.tag) } ?? []
+        let easy = prefsNow.tempo == .technical || prefsNow.tempo == .steady
+        audio.avoidComboLabels = easy ? Set(insights?.comboCost?.mostExpensive.map(\.label) ?? []) : []
+        audio.startBagCoach(prefs: prefsNow, context: context)
     }
 
     /// Phase time including the fraction since the last 1-s tick (smooth countdowns).
@@ -998,7 +1014,12 @@ final class WorkoutSession: ObservableObject {
             evaluatePlan(bpm: bpm, coachCfg: coachCfg)
             evaluateEncouragement(bpm: bpm, profile: p)
             if Int(elapsedSeconds) % 10 == 0 && samples.count >= 60 {
-                liveAlpha1 = HRVMath.liveAlpha1(recentSamples: Array(samples.suffix(150)))
+                // Smoothed so one noisy window doesn't flip the threshold readout.
+                if let a = HRVMath.liveAlpha1(recentSamples: Array(samples.suffix(150))) {
+                    liveAlpha1 = liveAlpha1.map { $0 * 0.6 + a * 0.4 } ?? a
+                } else {
+                    liveAlpha1 = nil
+                }
             }
         }
 
@@ -1009,6 +1030,7 @@ final class WorkoutSession: ObservableObject {
             advancePlan(by: dt)
         }
         guideBreathingIfNeeded()
+        recordActivity()
         evaluateHeadCues()
         watchStrap(now: now)
 
@@ -1167,6 +1189,13 @@ final class WorkoutSession: ObservableObject {
     // MARK: AirPods cues, nod, strap watch, debrief
 
     /// "Move your head" when head movement falls to half of round 1; "Chin down" when the chin stays up.
+    private func recordActivity() {
+        guard headMotion.isReceiving || audio.countBagHits else { return }
+        let total = headMotion.totalMoves + headMotion.totalBounces + bagHits
+        activityTrail.append(ActivityPoint(t: elapsedSeconds, n: max(0, total - lastActivityTotal)))
+        lastActivityTotal = total
+    }
+
     /// A jump measured by AirPods. Counts only inside plyo jump sets.
     private func recordJump(_ cm: Double) {
         guard isRecording, isRunningPlan, !isInPlanTransition, !planComplete,
@@ -1512,13 +1541,6 @@ final class WorkoutSession: ObservableObject {
 
     // MARK: Draft persistence
 
-    private var draftURL: URL? {
-        guard let store else { return nil }
-        let dir = store.documentsDirectory.appendingPathComponent("Drafts", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("active_workout.json")
-    }
-
     private func makeDraft(now: Date) -> WorkoutDraft {
         WorkoutDraft(
             id: draftID, profileID: store?.activeProfileID ?? UUID(), startTime: startTime ?? now, lastUpdate: now,
@@ -1533,17 +1555,58 @@ final class WorkoutSession: ObservableObject {
             headMovesPerMinute: headMovesPerMinute,
             breathingGuided: breathingUsed,
             impactsCount: audio.countBagHits ? bagHits : nil,
-            jumps: jumps.isEmpty ? nil : jumps
+            jumps: jumps.isEmpty ? nil : jumps,
+            activity: activityTrail.isEmpty ? nil : activityTrail
         )
     }
 
+
+    @ObservationIgnored private var cachedDraftsDirectory: URL?
+    private var draftsDirectory: URL? {
+        if let d = cachedDraftsDirectory { return d }
+        guard let store else { return nil }
+        let dir = store.documentsDirectory.appendingPathComponent("Drafts", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        cachedDraftsDirectory = dir
+        return dir
+    }
+    private var draftURL: URL? { draftsDirectory?.appendingPathComponent("active_workout.json") }
+    /// Heart-rate samples of the running session, one JSON line each, appended every 30 s.
+    private var draftSamplesURL: URL? { draftsDirectory?.appendingPathComponent("active_workout_samples.jsonl") }
+    @ObservationIgnored private var draftSamplesWritten = 0
+    /// Draft writes happen off the main thread, in order.
+    private let draftQueue = DispatchQueue(label: "fight.draft", qos: .utility)
+
+    /// Crash-safety save: a small header plus only the samples added since the last save,
+    /// encoded and written in the background so long sessions never stutter.
     private func saveDraft() {
-        guard isRecording, let url = draftURL else { return }
+        guard isRecording, let url = draftURL, let samplesURL = draftSamplesURL else { return }
         lastDraftSave = Date()
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        if let data = try? encoder.encode(makeDraft(now: Date())) {
-            try? data.write(to: url, options: .atomic)
+        var header = makeDraft(now: Date())
+        header.samples = []
+        let fresh = Array(samples[min(draftSamplesWritten, samples.count)...])
+        let truncate = draftSamplesWritten == 0
+        draftSamplesWritten = samples.count
+        draftQueue.async {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            var lines = Data()
+            for point in fresh {
+                if let line = try? encoder.encode(point) {
+                    lines.append(line)
+                    lines.append(0x0A)
+                }
+            }
+            if truncate || !FileManager.default.fileExists(atPath: samplesURL.path) {
+                try? lines.write(to: samplesURL, options: .atomic)
+            } else if !lines.isEmpty, let handle = try? FileHandle(forWritingTo: samplesURL) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: lines)
+                try? handle.close()
+            }
+            if let data = try? encoder.encode(header) {
+                try? data.write(to: url, options: .atomic)
+            }
         }
     }
 
@@ -1551,15 +1614,23 @@ final class WorkoutSession: ObservableObject {
         guard let url = draftURL, let data = try? Data(contentsOf: url) else { return nil }
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        guard let draft = try? decoder.decode(WorkoutDraft.self, from: data), draft.elapsedSeconds >= 60 else {
+        guard var draft = try? decoder.decode(WorkoutDraft.self, from: data), draft.elapsedSeconds >= 60 else {
             deleteDraft()
             return nil
+        }
+        // Older drafts kept the samples inside the header; newer ones append them to a side file.
+        if draft.samples.isEmpty, let samplesURL = draftSamplesURL, let raw = try? Data(contentsOf: samplesURL) {
+            draft.samples = raw.split(separator: 0x0A).compactMap { try? decoder.decode(HeartRatePoint.self, from: Data($0)) }
         }
         return draft
     }
 
     private func deleteDraft() {
-        if let url = draftURL { try? FileManager.default.removeItem(at: url) }
+        draftSamplesWritten = 0
+        let urls = [draftURL, draftSamplesURL].compactMap { $0 }
+        draftQueue.async {
+            for u in urls { try? FileManager.default.removeItem(at: u) }
+        }
     }
 
     /// Saves or discards a workout recovered after the app was closed mid-session.

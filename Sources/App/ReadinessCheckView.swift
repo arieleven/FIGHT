@@ -309,11 +309,7 @@ struct ReadinessCheckView: View {
 
     /// Today's jump vs the fighter's usual (0.9 = 10% lower), nil without a baseline.
     static func jumpRatio(_ r: ReadinessReading, history: [ReadinessReading]) -> Double? {
-        guard let j = r.jumpCm else { return nil }
-        let past = history.filter { $0.id != r.id }.compactMap(\.jumpCm).prefix(14)
-        guard past.count >= 3 else { return nil }
-        let avg = past.reduce(0, +) / Double(past.count)
-        return avg > 0 ? j / avg : nil
+        CoachEngine.jumpRatio(today: r, readings: history)
     }
 
     @ViewBuilder

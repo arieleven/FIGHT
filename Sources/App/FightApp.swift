@@ -6,7 +6,8 @@ struct FightApp: App {
     @StateObject private var workoutStore = WorkoutStore()
     @StateObject private var healthKit = HealthKitManager()
     @StateObject private var navigation = AppNavigation()
-    @StateObject private var session = WorkoutSession()
+    @State private var session = WorkoutSession()
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var undo = UndoCenter()
 
     var body: some Scene {
@@ -35,7 +36,7 @@ struct FightApp: App {
             .environmentObject(workoutStore)
             .environmentObject(healthKit)
             .environmentObject(navigation)
-            .environmentObject(session)
+            .environment(session)
             .task {
                 AppNavigation.shared = navigation
                 LiveActivityActions.handler = { [weak s = session] action in
@@ -45,6 +46,10 @@ struct FightApp: App {
                 }
                 WeeklyNudge.install()
                 session.bind(ble: bleManager, store: workoutStore, health: healthKit)
+                workoutStore.refreshCoach()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { workoutStore.flushPendingSaves() }
             }
             .onOpenURL { url in
                 navigation.handleOpenURL(url)

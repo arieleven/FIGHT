@@ -650,6 +650,40 @@ struct HeartRatePoint: Codable, Identifiable, Equatable {
         self.bpm = bpm
         self.rrIntervalsMs = rrIntervalsMs
     }
+
+    // Compact storage: about a tenth of the old size. No per-sample id on disk, the time as a
+    // number instead of a date string, RR rounded to 0.1 ms (sensors measure in ~1 ms steps).
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, elapsedSeconds, bpm, rrIntervalsMs   // old format
+        case e, b, s, r                                          // compact format
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let b = try c.decodeIfPresent(Int.self, forKey: .b) {
+            id = UUID()
+            bpm = b
+            elapsedSeconds = try c.decode(Double.self, forKey: .e)
+            timestamp = Date(timeIntervalSinceReferenceDate: try c.decode(Double.self, forKey: .s))
+            rrIntervalsMs = try c.decodeIfPresent([Double].self, forKey: .r) ?? []
+        } else {
+            id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            timestamp = try c.decode(Date.self, forKey: .timestamp)
+            elapsedSeconds = try c.decode(Double.self, forKey: .elapsedSeconds)
+            bpm = try c.decode(Int.self, forKey: .bpm)
+            rrIntervalsMs = try c.decodeIfPresent([Double].self, forKey: .rrIntervalsMs) ?? []
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(bpm, forKey: .b)
+        try c.encode((elapsedSeconds * 100).rounded() / 100, forKey: .e)
+        try c.encode((timestamp.timeIntervalSinceReferenceDate * 100).rounded() / 100, forKey: .s)
+        if !rrIntervalsMs.isEmpty {
+            try c.encode(rrIntervalsMs.map { ($0 * 10).rounded() / 10 }, forKey: .r)
+        }
+    }
 }
 
 struct RoundStat: Codable, Identifiable, Equatable {
@@ -1097,12 +1131,22 @@ enum FighterAnalytics {
         let bmr = profile.bmrCaloriesPerMinute * minutes
         guard bpm > 40 else { return (0, bmr, bmr) }
 
-        let totalKcalPerMin: Double
+        // Keytel et al. (2005), the version that includes fitness: VO2max estimated from the
+        // max/resting HR ratio (Uth et al. 2004). Much closer for fit athletes than the plain formula.
+        let hr = Double(bpm), w = profile.weightKg, a = Double(profile.age)
+        let vo2max = min(80, max(25, 15.3 * Double(profile.effectiveMaxHR) / Double(max(35, profile.restingHR))))
+        let keytel: Double
         if profile.sex == .male {
-            totalKcalPerMin = (-55.0969 + (0.6309 * Double(bpm)) + (0.1988 * profile.weightKg) + (0.2017 * Double(profile.age))) / 4.184
+            keytel = (-95.7735 + 0.634 * hr + 0.404 * vo2max + 0.394 * w + 0.271 * a) / 4.184
         } else {
-            totalKcalPerMin = (-20.4022 + (0.4472 * Double(bpm)) - (0.1263 * profile.weightKg) + (0.074 * Double(profile.age))) / 4.184
+            keytel = (-59.3954 + 0.45 * hr + 0.380 * vo2max + 0.103 * w + 0.274 * a) / 4.184
         }
+        // The formula was fitted on exercise heart rates and goes wrong near rest: below ~100 BPM
+        // blend into a resting-metabolism estimate scaled by heart-rate reserve.
+        let reserve = max(0, min(1, (hr - Double(profile.restingHR)) / Double(max(35, profile.effectiveMaxHR - profile.restingHR))))
+        let easy = profile.bmrCaloriesPerMinute * (1 + 6 * reserve)
+        let u = max(0, min(1, (hr - 85) / 15))
+        let totalKcalPerMin = easy * (1 - u) + max(easy, keytel) * u
         let total = max(bmr, totalKcalPerMin * minutes)
         let active = max(0, total - bmr)
         return (active, bmr, total)
@@ -1116,7 +1160,8 @@ enum FighterAnalytics {
         var trimp = 0.0
 
         for i in 1..<samples.count {
-            let dtMinutes = max(0, samples[i].elapsedSeconds - samples[i - 1].elapsedSeconds) / 60.0
+            // A sensor dropout is not training: credit at most 5 s per gap (same as the live clock).
+            let dtMinutes = min(5, max(0, samples[i].elapsedSeconds - samples[i - 1].elapsedSeconds)) / 60.0
             let hrr = min(1.0, max(0.0, (Double(samples[i].bpm) - rest) / span))
             trimp += dtMinutes * hrr * 0.64 * exp(bFactor * hrr)
         }

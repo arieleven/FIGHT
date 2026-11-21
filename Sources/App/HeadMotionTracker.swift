@@ -9,7 +9,8 @@ final class HeadMotionTracker: ObservableObject {
     @Published private(set) var totalMoves = 0
     @Published private(set) var totalBounces = 0
     /// Seconds spent with the chin lifted above the fighter's normal guard position.
-    @Published private(set) var chinUpSeconds: Double = 0
+    /// Not published: it changes ~25×/s while the chin is up and only the session reads it.
+    private(set) var chinUpSeconds: Double = 0
 
     /// Called with the estimated height (cm) of each jump, from the time in the air.
     var onJump: (@MainActor (Double) -> Void)?
@@ -64,7 +65,8 @@ final class HeadMotionTracker: ObservableObject {
             // Vertical acceleration: user acceleration projected on gravity (in g).
             let vertical = -(a.x * g.x + a.y * g.y + a.z * g.z)
             let roll = att.roll, pitch = att.pitch
-            Task { @MainActor in
+            // Updates arrive on the main queue: process them right away instead of scheduling a task per sample.
+            MainActor.assumeIsolated {
                 self?.process(ts: ts, rx: r.x, ry: r.y, rz: r.z, vertical: vertical, roll: roll, pitch: pitch)
             }
         }
@@ -84,7 +86,7 @@ final class HeadMotionTracker: ObservableObject {
     }
 
     private func process(ts: TimeInterval, rx: Double, ry: Double, rz: Double, vertical: Double, roll: Double, pitch: Double) {
-        isReceiving = true
+        if !isReceiving { isReceiving = true }   // only publish real changes (this runs ~25×/s)
         let dt = lastTimestamp.map { min(0.2, max(0, ts - $0)) } ?? 0
         lastTimestamp = ts
 

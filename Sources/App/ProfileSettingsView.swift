@@ -5,7 +5,7 @@ struct ProfileSettingsView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var healthKit: HealthKitManager
     @EnvironmentObject var navigation: AppNavigation
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
     @EnvironmentObject var undo: UndoCenter
     @State private var confirmingDelete = false
     @State private var showingNewProfileAlert = false
@@ -361,7 +361,7 @@ struct ProfileSettingsView: View {
                             .foregroundStyle(.green)
                     }
                     HStack {
-                        Text("Compressed (>7 Days Old)")
+                        Text("Compressed sessions")
                         Spacer()
                         Text("\(workoutStore.compressedArchiveCount) workouts")
                             .font(.caption.weight(.semibold))

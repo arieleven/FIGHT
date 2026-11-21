@@ -4,7 +4,7 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var bleManager: BLEHeartRateManager
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
     @Environment(\.dismiss) private var dismiss
 
     @State private var page = 0

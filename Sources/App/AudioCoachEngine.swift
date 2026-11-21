@@ -223,8 +223,11 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         preparationProgress = 0
         for (i, phrase) in phrases.enumerated() {
             if Task.isCancelled { break }
-            if let buf = await render(phrase, rate: rate, synth: vocabSynth) {
+            if let saved = VoiceDiskCache.load(phrase, voice: bestVoice?.identifier, rate: rate) {
+                phraseCache[phrase] = saved
+            } else if let buf = await render(phrase, rate: rate, synth: vocabSynth) {
                 phraseCache[phrase] = buf
+                VoiceDiskCache.save(buf, phrase: phrase, voice: bestVoice?.identifier, rate: rate)
             }
             preparationProgress = Double(i + 1) / Double(phrases.count)
         }
@@ -338,6 +341,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         guard !buffers.isEmpty else { return }
         ensureEngineRunning()
         let total = Self.duration(buffers)
+        hitDetector.noteOwnSound(seconds: total)
         let once = ResumeOnce()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             for (i, buf) in buffers.enumerated() {
@@ -360,20 +364,26 @@ final class AudioCoachEngine: NSObject, ObservableObject {
 
     func playRoundStartBell() {
         ensureEngineRunning()
-        if let b = bellBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
+        if let b = bellBuffer { playFX(b) }
     }
 
     func playRoundEndBell() {
         ensureEngineRunning()
-        if let b = tripleBellBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
+        if let b = tripleBellBuffer { playFX(b) }
     }
 
     /// Soft breathing guide tone: rising pitch = breathe in, falling = breathe out.
     func playBreathCue(inhale: Bool, seconds: Double) {
         ensureEngineRunning()
         if let b = Self.breathTone(rising: inhale, seconds: seconds) {
-            fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil)
+            playFX(b)
         }
+    }
+
+    /// Plays a sound effect and tells the bag-hit listener it isn't a hit.
+    private func playFX(_ b: AVAudioPCMBuffer) {
+        hitDetector.noteOwnSound(seconds: Double(b.frameLength) / b.format.sampleRate)
+        fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil)
     }
 
     private static func breathTone(rising: Bool, seconds: Double) -> AVAudioPCMBuffer? {
@@ -402,7 +412,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     /// Two sharp claps: the gym's "10 seconds" warning.
     func playClapper() {
         ensureEngineRunning()
-        if let b = clapperBuffer { fxNode.scheduleBuffer(b, at: nil, options: [], completionHandler: nil) }
+        if let b = clapperBuffer { playFX(b) }
     }
 
     private static func bell(strikes: Int) -> AVAudioPCMBuffer? {
@@ -489,6 +499,9 @@ final class AudioCoachEngine: NSObject, ObservableObject {
     // MARK: Bag coach
 
     var isBagCoachRunning: Bool { bagTask != nil }
+    /// Set by the session before the bag coach starts (see ComboGenerator).
+    var focusStrikes: Set<Strike> = []
+    var avoidComboLabels: Set<String> = []
 
     func startBagCoach(prefs: BagPreferences, context: BagLoopContext) {
         stopBagCoach()
@@ -496,6 +509,8 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         bagTask = Task { [weak self] in
             guard let self else { return }
             var generator = ComboGenerator(prefs: prefs)
+            generator.focusStrikes = self.focusStrikes
+            generator.avoidLabels = self.avoidComboLabels
             if prefs.mode != .cadenceBeep {
                 await self.prepareVocabulary(prefs: prefs)
             }
@@ -643,5 +658,47 @@ final class AudioCoachEngine: NSObject, ObservableObject {
             }
         }
         announcementTask = nil
+    }
+}
+
+/// Rendered voice lines saved in Caches, so the bag coach starts instantly on the next launch.
+/// Keyed by voice and speech rate; iOS may clear Caches, and then lines are simply rendered again.
+enum VoiceDiskCache {
+    private static func url(_ phrase: String, voice: String?, rate: Float) -> URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        func safe(_ x: String) -> String {
+            String(x.unicodeScalars.map { CharacterSet.alphanumerics.contains($0) ? Character($0) : "_" })
+        }
+        let dir = caches.appendingPathComponent("VoiceCache", isDirectory: true)
+            .appendingPathComponent("\(safe(voice ?? "default"))-\(Int(rate * 1000))", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("\(safe(phrase))-\(phrase.utf8.count).pcm")
+    }
+
+    static func save(_ buffer: AVAudioPCMBuffer, phrase: String, voice: String?, rate: Float) {
+        guard let url = url(phrase, voice: voice, rate: rate), let data = buffer.floatChannelData?[0] else { return }
+        var sampleRate = buffer.format.sampleRate
+        var out = Data(bytes: &sampleRate, count: MemoryLayout<Double>.size)
+        out.append(Data(bytes: data, count: Int(buffer.frameLength) * MemoryLayout<Float>.size))
+        try? out.write(to: url, options: .atomic)
+    }
+
+    static func load(_ phrase: String, voice: String?, rate: Float) -> AVAudioPCMBuffer? {
+        guard let url = url(phrase, voice: voice, rate: rate), let data = try? Data(contentsOf: url),
+              data.count > MemoryLayout<Double>.size else { return nil }
+        let sampleRate = data.prefix(MemoryLayout<Double>.size).withUnsafeBytes { $0.loadUnaligned(as: Double.self) }
+        let body = data.dropFirst(MemoryLayout<Double>.size)
+        let frames = body.count / MemoryLayout<Float>.size
+        guard sampleRate > 0, frames > 0,
+              let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+              let dst = buffer.floatChannelData?[0] else { return nil }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        body.withUnsafeBytes { raw in
+            if let src = raw.baseAddress?.assumingMemoryBound(to: Float.self) {
+                dst.update(from: src, count: frames)
+            }
+        }
+        return buffer
     }
 }

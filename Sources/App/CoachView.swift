@@ -7,11 +7,15 @@ struct CoachView: View {
     @EnvironmentObject var healthKit: HealthKitManager
     @State private var importingHealth = false
 
-    @State private var report: CoachReport?
     @State private var selectedMetric: MetricScore?
     @State private var showingReadinessCheck = false
     @State private var showingLoadInfo = false
-    @State private var insights = CoachInsights()
+
+    /// Shared with Today: computed once in the background by the store.
+    private var report: CoachReport? {
+        workoutStore.coachProfileID == workoutStore.activeProfileID ? workoutStore.coachReport : nil
+    }
+    private var insights: CoachInsights { workoutStore.coachInsights }
     @State private var showingBreathing = false
     @State private var showingSoreness = false
     @State private var storyFocus: StoryCardKind?
@@ -70,18 +74,12 @@ struct CoachView: View {
             .onChange(of: workoutStore.readinessReadings.count) { _, _ in refresh() }
             .onChange(of: workoutStore.soreness.count) { _, _ in refresh() }
             .onChange(of: workoutStore.activeProfileID) { _, _ in refresh() }
-            .refreshable { refresh() }
+            .refreshable { workoutStore.refreshCoach(force: true) }
         }
     }
 
     private func refresh() {
-        report = CoachEngine.buildReport(
-            workouts: workoutStore.workouts,
-            readings: workoutStore.activeReadings,
-            profile: workoutStore.activeProfile,
-            resolveSamples: { workoutStore.resolvedSamples(for: $0) }
-        )
-        insights = CoachInsights.build(store: workoutStore)
+        workoutStore.refreshCoach()
     }
 
     private func consumeReadinessRequest() {

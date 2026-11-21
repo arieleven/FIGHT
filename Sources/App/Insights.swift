@@ -8,6 +8,19 @@ private func median(_ xs: [Double]) -> Double? {
     return s.count % 2 == 1 ? s[s.count / 2] : (s[s.count / 2 - 1] + s[s.count / 2]) / 2
 }
 
+/// Median where each value counts by its weight (recent, hard sessions count more).
+private func weightedMedian(_ xs: [Double], _ ws: [Double]) -> Double? {
+    let pairs = zip(xs, ws).filter { $0.1 > 0 }.sorted { $0.0 < $1.0 }
+    let total = pairs.reduce(0) { $0 + $1.1 }
+    guard total > 0 else { return nil }
+    var acc = 0.0
+    for (x, w) in pairs {
+        acc += w
+        if acc >= total / 2 { return x }
+    }
+    return pairs.last?.0
+}
+
 private func mean(_ xs: [Double]) -> Double? {
     xs.isEmpty ? nil : xs.reduce(0, +) / Double(xs.count)
 }
@@ -74,30 +87,52 @@ enum GasTank {
         var workDurations: [Double] = []
         var firstDrops: [Double] = []
         var fades: [Double] = []
+        var weights: [Double] = []
+        var dropWeights: [Double] = []
+        var fadeWeights: [Double] = []
 
         for w in workouts where w.profileID == profile.id && w.startDate >= since {
             let rounds = w.roundStats.sorted { $0.roundNumber < $1.roundNumber }
             guard rounds.count >= 3 else { continue }
             let avgWork = rounds.map { $0.endElapsed - $0.startElapsed }.reduce(0, +) / Double(rounds.count)
             guard avgWork >= 75 else { continue }
+            // Easy technique rounds say little about the tank: skip them, and let recent,
+            // harder sessions count more (half-weight after two weeks).
+            guard Double(rounds[0].avgBPM) > Double(zones.z1Max) else { continue }
+            let days = max(0, now.timeIntervalSince(w.startDate) / 86400)
+            let total = max(1, w.zoneSeconds.values.reduce(0, +))
+            let hardShare = (w.zoneSeconds[4, default: 0] + w.zoneSeconds[5, default: 0]) / total
+            let weight = pow(0.5, days / 14) * min(1, max(0.3, hardShare * 3))
             let x = rounds.indices.map(Double.init)
             let y = rounds.map { Double($0.avgBPM) }
-            guard let fit = HRVMath.linearRegression(x, y) else { continue }
+            guard var fit = HRVMath.linearRegression(x, y) else { continue }
+            // If you hit the bag MORE in later rounds, some of the climb is extra output, not fatigue.
+            let hits = rounds.compactMap(\.impacts).map(Double.init)
+            if hits.count == rounds.count, let early = mean(Array(hits.prefix(rounds.count / 2))),
+               let late = mean(Array(hits.suffix(rounds.count / 2))), early > 0, late > early {
+                fit.slope /= min(1.5, late / early)
+            }
+            weights.append(weight)
             slopes.append(fit.slope)
             firsts.append(fit.intercept)
             workDurations.append(avgWork)
             let drops = rounds.compactMap(\.stoolDropBPM).map(Double.init)
-            if let d0 = drops.first { firstDrops.append(d0) }
+            if let d0 = drops.first {
+                firstDrops.append(d0)
+                dropWeights.append(weight)
+            }
             if drops.count >= 3, let f = HRVMath.linearRegression(drops.indices.map(Double.init), drops) {
                 fades.append(f.slope)
+                fadeWeights.append(weight)
             }
         }
 
         guard slopes.count >= 2,
-              let slopeMed = median(slopes), let first = median(firsts), let work = median(workDurations) else { return nil }
+              let slopeMed = weightedMedian(slopes, weights), let first = weightedMedian(firsts, weights),
+              let work = median(workDurations) else { return nil }
         let slope = max(0.3, slopeMed)
-        let baseRecovery = median(firstDrops)
-        let fade = median(fades).map { min(0, $0) }
+        let baseRecovery = weightedMedian(firstDrops, dropWeights)
+        let fade = weightedMedian(fades, fadeWeights).map { min(0, $0) }
         let intense = first >= Double(zones.z2Max)
 
         var all = FightFormat.common
@@ -701,54 +736,136 @@ enum BreathingEffect {
 
 /// Finds rounds from the heart-rate pattern when no round timer was used
 /// (sparring, pads, class): sustained work blocks separated by recovery dips.
-enum AutoRounds {
-    static func detect(samples: [HeartRatePoint], profile: AthleteProfile) -> [RoundStat] {
-        let pts = samples.sorted { $0.elapsedSeconds < $1.elapsedSeconds }
-        guard pts.count >= 360 else { return [] }
-        // 1 Hz series, smoothed over 15 s.
-        let raw = pts.map { Double($0.bpm) }
-        var smooth = [Double](repeating: 0, count: raw.count)
-        var run = 0.0
-        for i in raw.indices {
-            run += raw[i]
-            if i >= 15 { run -= raw[i - 15] }
-            smooth[i] = run / Double(min(i + 1, 15))
-        }
-        let sorted = smooth.sorted()
-        let p20 = sorted[sorted.count / 5], p90 = sorted[sorted.count * 9 / 10]
-        guard p90 - p20 >= 20 else { return [] }   // no clear work/rest rhythm
-        let threshold = max(Double(profile.activeZones.z2Max), p20 + (p90 - p20) * 0.55)
+/// Per-second movement count (AirPods moves + bounces + bag hits), used to find rounds.
+struct ActivityPoint: Codable, Equatable {
+    let t: TimeInterval
+    let n: Int
+}
 
-        // Work blocks above threshold, bridging dips shorter than 20 s.
-        var blocks: [(start: Int, end: Int)] = []
+enum AutoRounds {
+    /// Finds work rounds in a session recorded without the round timer.
+    /// - Uses real timestamps (dropouts don't shift the rounds).
+    /// - Movement (AirPods / bag hits) marks rounds instantly when it was recorded; otherwise
+    ///   heart rate does, with starts pulled back to where HR began rising (HR lags the work).
+    static func detect(samples: [HeartRatePoint], activity: [ActivityPoint] = [], profile: AthleteProfile) -> [RoundStat] {
+        let pts = samples.sorted { $0.elapsedSeconds < $1.elapsedSeconds }
+        guard let first = pts.first, let last = pts.last, last.elapsedSeconds - first.elapsedSeconds >= 360 else { return [] }
+        let hr = grid(pts.map { ($0.elapsedSeconds, Double($0.bpm)) }, from: first.elapsedSeconds, to: last.elapsedSeconds)
+        guard hr.count >= 360 else { return [] }
+        let smooth = centredMean(hr, radius: 5)
+
+        var blocks: [Range<Int>] = []
+        if let moving = activityBlocks(activity, from: first.elapsedSeconds, count: smooth.count) {
+            blocks = moving
+        } else {
+            let sorted = smooth.sorted()
+            let p20 = sorted[sorted.count / 5], p90 = sorted[sorted.count * 9 / 10]
+            guard p90 - p20 >= 20 else { return [] }   // no clear work/rest rhythm
+            let threshold = max(Double(profile.activeZones.z2Max), p20 + (p90 - p20) * 0.55)
+            blocks = aboveBlocks(smooth.map { $0 >= threshold }, bridge: 20)
+            // Lag correction: the round began where HR started climbing (the low point before the block)
+            // and ended at the HR peak around the block's end.
+            var corrected: [Range<Int>] = []
+            var previousEnd = 0
+            for b in blocks {
+                // Walk back while HR was still clearly climbing (> 0.3 BPM/s): that's where the work began.
+                let lo = min(b.lowerBound, max(previousEnd, b.lowerBound - 40))
+                var start = b.lowerBound
+                while start > lo && smooth[start] - smooth[start - 1] > 0.3 { start -= 1 }
+                let hiEnd = min(smooth.count - 1, b.upperBound + 15)
+                let endSearch = max(b.lowerBound, b.upperBound - 20)...hiEnd
+                let end = endSearch.max { smooth[$0] < smooth[$1] } ?? b.upperBound
+                if end > start { corrected.append(start..<end) }
+                previousEnd = end
+            }
+            blocks = corrected
+        }
+        let rounds = blocks.filter { $0.count >= 60 && $0.count <= 600 }
+        guard rounds.count >= 2 else { return [] }
+
+        return rounds.enumerated().map { n, b in
+            let slice = hr[b].map { Int($0.rounded()) }
+            let endBPM = Int(smooth[b.upperBound].rounded())
+            let nextStart = n + 1 < rounds.count ? rounds[n + 1].lowerBound : hr.count - 1
+            let after = min(b.upperBound + 60, nextStart, hr.count - 1)
+            let drop: Int? = after - b.upperBound >= 45 ? max(0, endBPM - Int(smooth[after].rounded())) : nil
+            return RoundStat(roundNumber: n + 1,
+                             startElapsed: first.elapsedSeconds + Double(b.lowerBound),
+                             endElapsed: first.elapsedSeconds + Double(b.upperBound),
+                             avgBPM: slice.reduce(0, +) / max(1, slice.count), peakBPM: slice.max() ?? endBPM,
+                             stoolDropBPM: drop)
+        }
+    }
+
+    /// One value per second. Short gaps (≤ 5 s) hold the last value; longer dropouts are
+    /// bridged linearly so they don't look like rest.
+    static func grid(_ points: [(TimeInterval, Double)], from t0: TimeInterval, to t1: TimeInterval) -> [Double] {
+        let n = Int(t1 - t0) + 1
+        guard n > 0, !points.isEmpty else { return [] }
+        var out = [Double](repeating: points[0].1, count: n)
+        var j = 0
+        for i in 0..<n {
+            let t = t0 + Double(i)
+            while j + 1 < points.count && points[j + 1].0 <= t { j += 1 }
+            let a = points[j]
+            if j + 1 < points.count, t - a.0 > 5 {
+                let b = points[j + 1]
+                let u = (t - a.0) / max(1, b.0 - a.0)
+                out[i] = a.1 + (b.1 - a.1) * u
+            } else {
+                out[i] = a.1
+            }
+        }
+        return out
+    }
+
+    /// Centred moving average (no lag, unlike a trailing average).
+    static func centredMean(_ x: [Double], radius: Int) -> [Double] {
+        guard !x.isEmpty else { return [] }
+        var prefix = [Double](repeating: 0, count: x.count + 1)
+        for i in x.indices { prefix[i + 1] = prefix[i] + x[i] }
+        return x.indices.map { i in
+            let lo = max(0, i - radius), hi = min(x.count - 1, i + radius)
+            return (prefix[hi + 1] - prefix[lo]) / Double(hi - lo + 1)
+        }
+    }
+
+    /// Runs of `true`, joining gaps shorter than `bridge` seconds.
+    static func aboveBlocks(_ on: [Bool], bridge: Int) -> [Range<Int>] {
+        var blocks: [Range<Int>] = []
         var start: Int?
         var below = 0
-        for i in smooth.indices {
-            if smooth[i] >= threshold {
+        for i in on.indices {
+            if on[i] {
                 if start == nil { start = i }
                 below = 0
             } else if let s = start {
                 below += 1
-                if below > 20 {
-                    blocks.append((s, i - below))
+                if below > bridge {
+                    blocks.append(s..<(i - below))
                     start = nil
                     below = 0
                 }
             }
         }
-        if let s = start { blocks.append((s, smooth.count - 1 - below)) }
-        let rounds = blocks.filter { $0.end - $0.start >= 60 && $0.end - $0.start <= 600 }
-        guard rounds.count >= 2 else { return [] }
+        if let s = start { blocks.append(s..<(on.count - 1 - below)) }
+        return blocks
+    }
 
-        return rounds.enumerated().map { n, b in
-            let slice = pts[b.start...b.end].map(\.bpm)
-            let endBPM = pts[b.end].bpm
-            let after = min(pts.count - 1, b.end + 60)
-            let nextStart = n + 1 < rounds.count ? rounds[n + 1].start : Int.max
-            let drop: Int? = after < nextStart && after - b.end >= 50 ? max(0, endBPM - pts[after].bpm) : nil
-            return RoundStat(roundNumber: n + 1, startElapsed: pts[b.start].elapsedSeconds, endElapsed: pts[b.end].elapsedSeconds,
-                             avgBPM: slice.reduce(0, +) / slice.count, peakBPM: slice.max() ?? endBPM, stoolDropBPM: drop)
+    /// Rounds from movement, when there's enough of it to trust.
+    private static func activityBlocks(_ activity: [ActivityPoint], from t0: TimeInterval, count: Int) -> [Range<Int>]? {
+        guard activity.count >= 300, activity.reduce(0, { $0 + $1.n }) >= 200 else { return nil }
+        var perSecond = [Double](repeating: 0, count: count)
+        for a in activity {
+            let i = Int(a.t - t0)
+            if i >= 0 && i < count { perSecond[i] += Double(a.n) }
         }
+        let smooth = centredMean(perSecond, radius: 7)
+        let sorted = smooth.sorted()
+        let p90 = sorted[sorted.count * 9 / 10]
+        guard p90 > 0.3 else { return nil }
+        let blocks = aboveBlocks(smooth.map { $0 >= p90 * 0.35 }, bridge: 12)
+        return blocks.count >= 2 ? blocks : nil
     }
 }
 

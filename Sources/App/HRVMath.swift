@@ -11,7 +11,8 @@ enum HRVMath {
         let cleanRR: [Double]
         let artifactRate: Double
         var isUsableForHRV: Bool { cleanRR.count >= 60 && artifactRate <= 0.10 }
-        var isUsableForDFA: Bool { cleanRR.count >= 100 && artifactRate <= 0.05 }
+        /// DFA α1 is biased by more than ~3% artifacts (Rogers et al.), even after correction.
+        var isUsableForDFA: Bool { cleanRR.count >= 100 && artifactRate <= 0.03 }
     }
 
     struct VT1Estimate: Equatable {
@@ -52,6 +53,35 @@ enum HRVMath {
             clean.append(v)
         }
         return RRQuality(cleanRR: clean, artifactRate: Double(artifacts) / Double(rr.count))
+    }
+
+    /// Like `cleanRR`, but replaces each bad beat with the local median instead of deleting it,
+    /// so the beat sequence keeps its timing. DFA integrates the series, and deleted beats
+    /// distort that; corrected beats barely do.
+    static func correctRR(_ rr: [Double]) -> RRQuality {
+        guard !rr.isEmpty else { return RRQuality(cleanRR: [], artifactRate: 0) }
+        var out: [Double] = []
+        out.reserveCapacity(rr.count)
+        var artifacts = 0
+        var window: [Double] = []
+        window.reserveCapacity(10)
+        for i in rr.indices {
+            window.removeAll(keepingCapacity: true)
+            for j in max(0, i - 5)...min(rr.count - 1, i + 5) where j != i && rr[j] >= 300 && rr[j] <= 2000 {
+                window.append(rr[j])
+            }
+            window.sort()
+            let median = window.isEmpty ? nil : window[window.count / 2]
+            let v = rr[i]
+            let bad = v < 300 || v > 2000 || (window.count >= 3 && median.map { abs(v - $0) / $0 > 0.20 } == true)
+            if bad {
+                artifacts += 1
+                if let m = median { out.append(m) }   // nothing to patch with: drop it
+            } else {
+                out.append(v)
+            }
+        }
+        return RRQuality(cleanRR: out, artifactRate: Double(artifacts) / Double(rr.count))
     }
 
     static func rmssd(_ clean: [Double]) -> Double? {
@@ -95,8 +125,10 @@ enum HRVMath {
                 sxx += dx * dx
             }
             var sumSq = 0.0
-            for b in 0..<boxes {
-                let start = b * n
+            // Boxes laid from the start and again from the end, so no beats are left unused.
+            let offset = y.count - boxes * n
+            let starts = (0..<boxes).map { $0 * n } + (offset > 0 ? (0..<boxes).map { offset + $0 * n } : [])
+            for start in starts {
                 var yMean = 0.0
                 for k in 0..<n { yMean += y[start + k] }
                 yMean /= nD
@@ -109,7 +141,7 @@ enum HRVMath {
                     sumSq += r * r
                 }
             }
-            let f = sqrt(sumSq / Double(boxes * n))
+            let f = sqrt(sumSq / Double(starts.count * n))
             guard f > 0 else { continue }
             logN.append(log(nD))
             logF.append(log(f))
@@ -173,8 +205,13 @@ enum HRVMath {
             var endIdx = startIdx
             while endIdx < timed.count && timed[endIdx].t < windowStart + 120 { endIdx += 1 }
             let window = timed[startIdx..<endIdx].map { $0.rr }
-            let q = cleanRR(window)
-            if q.isUsableForDFA, let a = dfaAlpha1(q.cleanRR), let hr = meanHR(fromRR: q.cleanRR),
+            let q = correctRR(window)
+            // Only steady windows: while HR is still climbing or falling, α1 reflects the change, not the intensity.
+            let third = q.cleanRR.count / 3
+            let drift: Double = third >= 20
+                ? abs((meanHR(fromRR: Array(q.cleanRR.prefix(third))) ?? 0) - (meanHR(fromRR: Array(q.cleanRR.suffix(third))) ?? 0))
+                : 99
+            if q.isUsableForDFA, drift <= 8, let a = dfaAlpha1(q.cleanRR), let hr = meanHR(fromRR: q.cleanRR),
                a > 0.3, a < 1.5 {
                 hrs.append(hr)
                 alphas.append(a)
@@ -195,24 +232,36 @@ enum HRVMath {
 
     /// Live alpha1 over the most recent ~2 minutes of beats, or nil if unreliable.
     static func liveAlpha1(recentSamples: [HeartRatePoint]) -> Double? {
-        let rr = Array(recentSamples.flatMap(\.rrIntervalsMs).suffix(160))
-        let q = cleanRR(rr)
+        // The last 2 minutes of beats (the window the research used), however fast the heart is.
+        let all = recentSamples.flatMap(\.rrIntervalsMs)
+        var total = 0.0
+        var count = 0
+        for v in all.reversed() {
+            total += v
+            count += 1
+            if total >= 120_000 { break }
+        }
+        let q = correctRR(Array(all.suffix(count)))
         guard q.isUsableForDFA else { return nil }
         return dfaAlpha1(q.cleanRR)
     }
 
     /// Largest heart-rate rise over any ~20-second span (HR on-kinetics / explosiveness).
+    /// Sliding-window maximum with a monotonic queue: one pass, no copies.
     static func maxSurge(samples: [HeartRatePoint], windowSeconds: TimeInterval = 20) -> Int? {
         guard samples.count >= 10 else { return nil }
         var best = 0
+        var queue: [Int] = []      // indices, bpm decreasing
+        var head = 0
         var j = 0
         for i in samples.indices {
-            if j < i { j = i }
-            while j + 1 < samples.count && samples[j + 1].elapsedSeconds - samples[i].elapsedSeconds <= windowSeconds {
+            while j < samples.count && samples[j].elapsedSeconds - samples[i].elapsedSeconds <= windowSeconds {
+                while queue.count > head, let lastIdx = queue.last, samples[lastIdx].bpm <= samples[j].bpm { queue.removeLast() }
+                queue.append(j)
                 j += 1
             }
-            let peakInWindow = samples[i...j].map(\.bpm).max() ?? samples[i].bpm
-            best = max(best, peakInWindow - samples[i].bpm)
+            while head < queue.count && queue[head] < i { head += 1 }
+            if head < queue.count { best = max(best, samples[queue[head]].bpm - samples[i].bpm) }
         }
         return best
     }

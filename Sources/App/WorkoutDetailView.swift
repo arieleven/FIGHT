@@ -14,21 +14,43 @@ struct WorkoutDetailView: View {
     @State private var showRollingTrend = true
     @State private var showingComparison = false
 
-    private var chartSamples: [HeartRatePoint] {
-        guard loadedSamples.count > 360 else { return loadedSamples }
-        let strideStep = max(1, loadedSamples.count / 360)
-        return stride(from: 0, to: loadedSamples.count, by: strideStep).map { loadedSamples[$0] }
+    /// Thinned once when the session loads (not on every redraw or drag).
+    @State private var chartSamples: [HeartRatePoint] = []
+    @State private var rollingTrendSamples: [HeartRatePoint] = []
+
+    /// Keeps the shape of the curve with ~360 points: each bucket keeps its lowest and highest
+    /// reading (in time order), so peaks and stool drops never vanish like they can with every-Nth thinning.
+    static func thin(_ samples: [HeartRatePoint], target: Int = 360) -> [HeartRatePoint] {
+        guard samples.count > target else { return samples }
+        let bucket = max(1, Int((Double(samples.count) / Double(target / 2)).rounded(.up)))
+        var out: [HeartRatePoint] = []
+        out.reserveCapacity(target + 2)
+        var i = 0
+        while i < samples.count {
+            let slice = samples[i..<min(samples.count, i + bucket)]
+            if let lo = slice.indices.min(by: { samples[$0].bpm < samples[$1].bpm }),
+               let hi = slice.indices.max(by: { samples[$0].bpm < samples[$1].bpm }) {
+                if lo == hi {
+                    out.append(samples[lo])
+                } else {
+                    out.append(samples[min(lo, hi)])
+                    out.append(samples[max(lo, hi)])
+                }
+            }
+            i += bucket
+        }
+        return out
     }
 
-    private var rollingTrendSamples: [HeartRatePoint] {
-        guard chartSamples.count >= 8 else { return [] }
+    static func trend(_ pts: [HeartRatePoint]) -> [HeartRatePoint] {
+        guard pts.count >= 8 else { return [] }
         let window = 6
-        return chartSamples.indices.map { i in
-            let lo = max(0, i - window)
-            let hi = min(chartSamples.count - 1, i + window)
-            let slice = chartSamples[lo...hi].map(\.bpm)
-            let avg = slice.reduce(0, +) / slice.count
-            return HeartRatePoint(timestamp: chartSamples[i].timestamp, elapsedSeconds: chartSamples[i].elapsedSeconds, bpm: avg)
+        var prefix = [0]
+        for p in pts { prefix.append(prefix.last! + p.bpm) }
+        return pts.indices.map { i in
+            let lo = max(0, i - window), hi = min(pts.count - 1, i + window)
+            let avg = (prefix[hi + 1] - prefix[lo]) / (hi - lo + 1)
+            return HeartRatePoint(timestamp: pts[i].timestamp, elapsedSeconds: pts[i].elapsedSeconds, bpm: avg)
         }
     }
 
@@ -181,6 +203,8 @@ struct WorkoutDetailView: View {
         }
         .onAppear {
             loadedSamples = workoutStore.resolvedSamples(for: workout)
+            chartSamples = Self.thin(loadedSamples)
+            rollingTrendSamples = Self.trend(chartSamples)
         }
     }
 

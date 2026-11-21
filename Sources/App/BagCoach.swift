@@ -114,9 +114,56 @@ struct ComboGenerator {
     /// Library picks before any Dutch-finish kick was added, so a base combo
     /// can't be re-picked and turned into an identical repeat.
     private var recentBases: [[Strike]] = []
+    /// Strikes to lean toward (e.g. a technique you haven't drilled lately).
+    var focusStrikes: Set<Strike> = []
+    /// Combos (by short label, e.g. "1-2-LK") to call less often: your most expensive ones on easy days.
+    var avoidLabels: Set<String> = []
+    private var callCount = 0
+    private var lastCalled: [[Strike]: Int] = [:]
 
     init(prefs: BagPreferences) {
         self.prefs = prefs
+    }
+
+    /// Strikes that belong to a focus tag from the session tags list.
+    static func strikes(forFocus tag: String) -> Set<Strike> {
+        switch tag {
+        case "Jab": return [.jab]
+        case "Cross": return [.cross]
+        case "Hooks": return [.leadHook, .rearHook]
+        case "Uppercuts": return [.leadUppercut, .rearUppercut]
+        case "Body shots": return [.leadBodyHook, .rearBodyHook]
+        case "Low kicks": return [.leadLowKick, .rearLowKick]
+        case "Body kicks": return [.leadMidKick, .rearMidKick]
+        case "Head kicks": return [.leadHighKick, .rearHighKick, .switchKick]
+        case "Teeps": return [.leadTeep, .rearTeep]
+        case "Knees": return [.leadKnee, .rearKnee]
+        case "Elbows": return [.leadElbow, .rearElbow]
+        case "Defence", "Counters": return [.slip, .roll, .check, .block, .pivot]
+        default: return []
+        }
+    }
+
+    /// Weighted pick: combos you haven't heard for a while are likelier (instead of a flat
+    /// random pick), focus strikes are favoured and "avoid" combos are rarer.
+    private func weight(_ c: [Strike]) -> Double {
+        let gap = lastCalled[c].map { Double(callCount - $0) } ?? 12
+        var w = min(12, max(1, gap))
+        if !focusStrikes.isEmpty, c.contains(where: focusStrikes.contains) { w *= 1.8 }
+        if !avoidLabels.isEmpty, avoidLabels.contains(c.map { $0.shortLabel(stance: prefs.stance) }.joined(separator: "-")) { w *= 0.35 }
+        return w
+    }
+
+    private func weightedPick(_ pool: [[Strike]]) -> [Strike]? {
+        let ws = pool.map(weight)
+        let total = ws.reduce(0, +)
+        guard total > 0 else { return pool.randomElement() }
+        var r = Double.random(in: 0..<total)
+        for (c, w) in zip(pool, ws) {
+            if r < w { return c }
+            r -= w
+        }
+        return pool.last
     }
 
     static let library: [[Strike]] = [
@@ -171,7 +218,9 @@ struct ComboGenerator {
         if pool.isEmpty { pool = [[.jab, .cross]] }
 
         let fresh = pool.filter { candidate in !recent.contains(candidate) && !recentBases.contains(candidate) }
-        let base = (fresh.isEmpty ? pool : fresh).randomElement() ?? [.jab, .cross]
+        let base = weightedPick(fresh.isEmpty ? pool : fresh) ?? [.jab, .cross]
+        callCount += 1
+        lastCalled[base] = callCount
         var combo = base
 
         // Dutch-style finish: close punch combos with a kick.

@@ -6,7 +6,9 @@ struct LiveWorkoutView: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var navigation: AppNavigation
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
+    /// Two-way bindings into the session (pickers, toggles, sheets).
+    private var sessionBinding: Bindable<WorkoutSession> { Bindable(session) }
     @EnvironmentObject var undo: UndoCenter
     @ScaledMetric(relativeTo: .largeTitle) private var heroBPMSize: CGFloat = 74
 
@@ -107,7 +109,7 @@ struct LiveWorkoutView: View {
                             if session.selectedGhost != nil {
                                 ghostSimulatorCard
                             }
-                            TextField("Corner note…", text: $session.workoutNotes)
+                            TextField("Corner note…", text: sessionBinding.workoutNotes)
                                 .textFieldStyle(.roundedBorder)
                         }
                     } else {
@@ -141,7 +143,7 @@ struct LiveWorkoutView: View {
                     .presentationDetents([.medium, .large])
             }
             .sheet(isPresented: $showingBagSettings) {
-                BagSettingsSheet(prefs: $session.bagPrefs)
+                BagSettingsSheet(prefs: sessionBinding.bagPrefs)
             }
             .sheet(isPresented: $showingSetup) {
                 setupSheet
@@ -208,7 +210,7 @@ struct LiveWorkoutView: View {
             .sensoryFeedback(.impact(weight: .heavy), trigger: session.currentRound)
             .sensoryFeedback(.warning, trigger: session.isRestPeriod)
             .sensoryFeedback(.start, trigger: session.isRecording)
-            .sheet(isPresented: $session.showingSummary) {
+            .sheet(isPresented: sessionBinding.showingSummary) {
                 if let workout = session.finishedWorkout {
                     NavigationStack {
                         WorkoutDetailView(workout: workout)
@@ -468,7 +470,7 @@ struct LiveWorkoutView: View {
                 Text("Your workout")
                     .font(.headline)
                 Spacer()
-                Picker("Workout type", selection: $session.selectedCategory) {
+                Picker("Workout type", selection: sessionBinding.selectedCategory) {
                     ForEach(workoutTypes) { cat in
                         Label(cat.rawValue, systemImage: cat.icon).tag(cat)
                     }
@@ -508,14 +510,14 @@ struct LiveWorkoutView: View {
 
     private var roundEssentials: some View {
         HStack {
-            Picker("Round", selection: $session.workDurationSeconds) {
+            Picker("Round", selection: sessionBinding.workDurationSeconds) {
                 ForEach([30, 60, 90, 120, 180, 240, 300], id: \.self) { s in
                     Text("\(formatDuration(TimeInterval(s))) rounds").tag(s)
                 }
             }
             .pickerStyle(.menu)
             Spacer()
-            Picker("Rest", selection: $session.restDurationSeconds) {
+            Picker("Rest", selection: sessionBinding.restDurationSeconds) {
                 ForEach([15, 30, 45, 60, 90, 120], id: \.self) { s in
                     Text("\(formatDuration(TimeInterval(s))) rest").tag(s)
                 }
@@ -572,7 +574,7 @@ struct LiveWorkoutView: View {
     @ViewBuilder
     private var advancedSetup: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("Drill type", selection: $session.selectedDrillTag) {
+            Picker("Drill type", selection: sessionBinding.selectedDrillTag) {
                 ForEach(DrillTag.allCases) { tag in
                     Text(tag.rawValue).tag(tag)
                 }
@@ -764,7 +766,7 @@ struct LiveWorkoutView: View {
 
     private var roundBellCard: some View {
         VStack(spacing: 10) {
-            Toggle(isOn: $session.roundTimerEnabled) {
+            Toggle(isOn: sessionBinding.roundTimerEnabled) {
                 Label("Round Bell & Corner Timer", systemImage: "bell.fill")
                     .font(.subheadline.weight(.bold))
             }
@@ -785,13 +787,13 @@ struct LiveWorkoutView: View {
                     Spacer()
                     if !session.isRecording && !session.bagEnabled {
                         VStack(alignment: .trailing, spacing: 6) {
-                            Picker("Work", selection: $session.workDurationSeconds) {
+                            Picker("Work", selection: sessionBinding.workDurationSeconds) {
                                 ForEach([30, 60, 90, 120, 180, 240, 300], id: \.self) { s in
                                     Text("\(formatDuration(TimeInterval(s))) work").tag(s)
                                 }
                             }
                             .pickerStyle(.menu)
-                            Picker("Rest", selection: $session.restDurationSeconds) {
+                            Picker("Rest", selection: sessionBinding.restDurationSeconds) {
                                 ForEach([15, 30, 45, 60, 90, 120], id: \.self) { s in
                                     Text("\(formatDuration(TimeInterval(s))) rest").tag(s)
                                 }
@@ -834,7 +836,7 @@ struct LiveWorkoutView: View {
                 }
             }
             if !session.isRecording {
-                Picker("Ghost Session", selection: $session.selectedGhost) {
+                Picker("Ghost Session", selection: sessionBinding.selectedGhost) {
                     Text("None (solo session)").tag(Optional<GhostSession>.none)
                     ForEach(workoutStore.allAvailableGhosts()) { g in
                         Text(g.title).tag(Optional(g))
@@ -1220,7 +1222,7 @@ struct FlowLayout: Layout {
 // MARK: - Plan runner card
 
 struct PlanRunnerCard: View {
-    @EnvironmentObject var session: WorkoutSession
+    @Environment(WorkoutSession.self) var session
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
 
