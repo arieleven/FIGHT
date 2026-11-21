@@ -3,7 +3,8 @@ import SwiftUI
 struct HistoryListView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @State private var selectedFilter: WorkoutCategory?
-    @State private var filterByCurrentFighter = false
+    /// History shows the active fighter only, unless you ask for everyone.
+    @AppStorage("fight.history.allFighters") private var showAllFighters = false
     @State private var showingComparison = false
     @State private var backupURL: URL?
     @State private var backupFailed = false
@@ -40,7 +41,7 @@ struct HistoryListView: View {
     private var filteredWorkouts: [SavedWorkout] {
         workoutStore.workouts.filter { w in
             let matchesCat = (selectedFilter == nil || w.category == selectedFilter)
-            let matchesFighter = (!filterByCurrentFighter || w.profileID == workoutStore.activeProfileID)
+            let matchesFighter = showAllFighters || w.profileID == workoutStore.activeProfileID
             return matchesCat && matchesFighter
         }
     }
@@ -50,7 +51,7 @@ struct HistoryListView: View {
             List {
                 if filteredWorkouts.isEmpty {
                     ContentUnavailableView(
-                        "No Workouts Logged",
+                        showAllFighters || workoutStore.profiles.count == 1 ? "No Workouts Logged" : "No Workouts for \(workoutStore.activeProfile.name)",
                         systemImage: "heart.text.square",
                         description: Text("Recorded sessions save automatically to On My iPhone / FIGHT.")
                     )
@@ -75,11 +76,13 @@ struct HistoryListView: View {
                     }
                 }
             }
-            .navigationTitle("History")
+            .navigationTitle(workoutStore.profiles.count > 1 && !showAllFighters ? workoutStore.activeProfile.name : "History")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        Toggle("Only \(workoutStore.activeProfile.name)", isOn: $filterByCurrentFighter)
+                        if workoutStore.profiles.count > 1 {
+                            Toggle("Show all fighters", isOn: $showAllFighters)
+                        }
                         Picker("Discipline", selection: $selectedFilter) {
                             Text("All disciplines").tag(Optional<WorkoutCategory>.none)
                             ForEach(WorkoutCategory.allCases) { cat in
@@ -155,6 +158,11 @@ struct HistoryListView: View {
                 }
                 Text(workout.startDate.formatted(date: .abbreviated, time: .shortened))
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if showAllFighters && workoutStore.profiles.count > 1 {
+                Label(workout.profileName, systemImage: "person.fill")
+                    .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
 
