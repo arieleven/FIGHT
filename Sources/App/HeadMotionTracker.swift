@@ -12,9 +12,9 @@ final class HeadMotionTracker: ObservableObject {
     @Published private(set) var chinUpSeconds: Double = 0
 
     /// Called when the fighter nods (down-up), used to start the next round hands-free.
-    var onNod: (() -> Void)?
+    var onNod: (@MainActor () -> Void)?
     /// Raw samples for drills: (timestamp, rotation rate x/y/z, roll, pitch).
-    var onSample: ((TimeInterval, Double, Double, Double, Double, Double) -> Void)?
+    var onSample: (@MainActor (TimeInterval, Double, Double, Double, Double, Double) -> Void)?
 
     private let manager = CMHeadphoneMotionManager()
     private var lastMoveTime: TimeInterval = 0
