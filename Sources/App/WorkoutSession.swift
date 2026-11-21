@@ -6,6 +6,20 @@ import ActivityKit
 // MARK: - Draft (autosave / crash recovery)
 
 /// Everything needed to rebuild a workout if the app is killed mid-session.
+struct WorkoutSetup: Codable, Equatable {
+    var category: WorkoutCategory
+    var drill: DrillTag
+    var roundTimer: Bool
+    var workSeconds: Int
+    var restSeconds: Int
+    var bag: Bool
+}
+
+struct WorkoutSetupMemory: Codable {
+    var last: WorkoutSetup?
+    var byCategory: [String: WorkoutSetup] = [:]
+}
+
 struct WorkoutDraft: Codable {
     var id: UUID
     var profileID: UUID
@@ -249,6 +263,7 @@ final class WorkoutSession: ObservableObject {
         self.health = health
         if firstBind {
             syncFromProfile()
+            restoreLastSetup()
             recoverableDraft = loadDraft()
         }
     }
@@ -312,7 +327,70 @@ final class WorkoutSession: ObservableObject {
 
     // MARK: Setup changes
 
+    // MARK: Remembered setup
+
+    private var setupMemoryKey: String { "fight.setup.\(profile.id.uuidString)" }
+
+    private func loadSetupMemory() -> WorkoutSetupMemory {
+        guard let data = UserDefaults.standard.data(forKey: setupMemoryKey),
+              let m = try? JSONDecoder().decode(WorkoutSetupMemory.self, from: data) else { return WorkoutSetupMemory() }
+        return m
+    }
+
+    private var currentSetup: WorkoutSetup {
+        WorkoutSetup(category: selectedCategory, drill: selectedDrillTag, roundTimer: roundTimerEnabled,
+                     workSeconds: workDurationSeconds, restSeconds: restDurationSeconds, bag: bagEnabled)
+    }
+
+    /// Saves this workout's setup so the next one starts the same way (per workout type).
+    private func rememberSetup() {
+        guard selectedCategory != .lthrTest, queuedPlan == nil, runningPlan == nil else { return }
+        var m = loadSetupMemory()
+        m.last = currentSetup
+        m.byCategory[selectedCategory.rawValue] = currentSetup
+        if let data = try? JSONEncoder().encode(m) { UserDefaults.standard.set(data, forKey: setupMemoryKey) }
+    }
+
+    /// Puts back the setup from your last workout (call on launch and when the fighter changes).
+    func restoreLastSetup() {
+        guard !isRecording, queuedPlan == nil, let last = loadSetupMemory().last else { return }
+        apply(last)
+    }
+
+    private func apply(_ s: WorkoutSetup) {
+        suppressDefaults = true
+        selectedCategory = s.category
+        suppressDefaults = false
+        selectedDrillTag = s.drill
+        let noBag: [WorkoutCategory] = [.walk, .roadwork, .lthrTest]
+        bagEnabled = s.bag && !noBag.contains(s.category)
+        roundTimerEnabled = s.roundTimer || bagEnabled
+        if !bagEnabled {
+            workDurationSeconds = s.workSeconds
+            restDurationSeconds = s.restSeconds
+        }
+    }
+
+    /// One line describing what Start will do, e.g. "Muay Thai · 5 × 3:00 · Bag Coach".
+    var setupSummary: String {
+        if let plan = queuedPlan { return plan.title }
+        var parts = [selectedCategory.rawValue]
+        if selectedCategory == .lthrTest { return "30-min threshold test" }
+        func clock(_ s: Int) -> String { String(format: "%d:%02d", s / 60, s % 60) }
+        if bagEnabled {
+            parts.append("\(bagPrefs.estimatedTotalRounds) × \(clock(bagPrefs.workSeconds))")
+            parts.append("Bag Coach")
+        } else if roundTimerEnabled {
+            parts.append("\(clock(workDurationSeconds)) rounds")
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func applyDisciplineDefaults(_ category: WorkoutCategory) {
+        if let saved = loadSetupMemory().byCategory[category.rawValue] {
+            apply(saved)
+            return
+        }
         roundTimerEnabled = category.usesRoundTimerByDefault
         workDurationSeconds = category.defaultWorkSeconds
         restDurationSeconds = category.defaultRestSeconds
@@ -567,6 +645,7 @@ final class WorkoutSession: ObservableObject {
 
     func startWorkout() {
         guard !isRecording else { return }
+        rememberSetup()
         draftID = UUID()
         samples.removeAll()
         zoneSeconds = [1: 0, 2: 0, 3: 0, 4: 0, 5: 0]

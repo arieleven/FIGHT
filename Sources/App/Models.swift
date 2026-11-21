@@ -127,7 +127,10 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var fightDate: Date? = nil
     var campLengthWeeks: Int = 8
     var bagPreferences = BagPreferences()
-    var useImperial = false
+    /// Weight shown in pounds (stored in kg either way).
+    var useImperial = Locale.current.measurementSystem == .us
+    /// Height shown in feet and inches (stored in cm either way).
+    var heightImperial = Locale.current.measurementSystem == .us
     var campHistory: [CampRecord] = []
     var trackHeadMovement = true
     var guidedBreathing = false
@@ -137,7 +140,7 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         case restingHR, useAutoMaxHR, maxHR, lactateThresholdHR, zoneMethod
         case manualZones, campPhase, audioCoach
         case fightDate, campLengthWeeks, bagPreferences, useImperial
-        case campHistory, trackHeadMovement, guidedBreathing
+        case campHistory, trackHeadMovement, guidedBreathing, heightImperial
     }
 
     init() {}
@@ -163,6 +166,7 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         campLengthWeeks = try c.decodeIfPresent(Int.self, forKey: .campLengthWeeks) ?? 8
         bagPreferences = (try? c.decodeIfPresent(BagPreferences.self, forKey: .bagPreferences)) ?? BagPreferences()
         useImperial = (try? c.decodeIfPresent(Bool.self, forKey: .useImperial)) ?? false
+        heightImperial = (try? c.decodeIfPresent(Bool.self, forKey: .heightImperial)) ?? useImperial
         campHistory = (try? c.decodeIfPresent([CampRecord].self, forKey: .campHistory)) ?? []
         trackHeadMovement = (try? c.decodeIfPresent(Bool.self, forKey: .trackHeadMovement)) ?? true
         guidedBreathing = (try? c.decodeIfPresent(Bool.self, forKey: .guidedBreathing)) ?? false

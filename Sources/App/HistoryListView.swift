@@ -9,6 +9,34 @@ struct HistoryListView: View {
     @State private var backupFailed = false
     @State private var showingRecords = false
 
+    private struct WeekGroup {
+        let start: Date
+        let workouts: [SavedWorkout]
+        var load: Double { workouts.reduce(0) { $0 + $1.effectiveLoad } }
+        var minutes: Int { Int(workouts.reduce(0) { $0 + $1.duration } / 60) }
+    }
+
+    /// Sessions grouped by training week (newest first).
+    private var weekGroups: [WeekGroup] {
+        var cal = Calendar.current
+        cal.firstWeekday = 2
+        let grouped = Dictionary(grouping: filteredWorkouts) { w in
+            cal.dateInterval(of: .weekOfYear, for: w.startDate)?.start ?? cal.startOfDay(for: w.startDate)
+        }
+        return grouped.map { WeekGroup(start: $0.key, workouts: $0.value.sorted { $0.startDate > $1.startDate }) }
+            .sorted { $0.start > $1.start }
+    }
+
+    private func weekHeader(_ g: WeekGroup) -> some View {
+        let thisWeek = Calendar.current.isDate(g.start, equalTo: Date(), toGranularity: .weekOfYear)
+        return HStack {
+            Text(thisWeek ? "This week" : "Week of \(g.start.formatted(.dateTime.day().month()))")
+            Spacer()
+            Text("\(g.workouts.count) sessions · \(g.minutes) min · load \(Int(g.load))")
+                .monospacedDigit()
+        }
+    }
+
     private var filteredWorkouts: [SavedWorkout] {
         workoutStore.workouts.filter { w in
             let matchesCat = (selectedFilter == nil || w.category == selectedFilter)
@@ -27,16 +55,22 @@ struct HistoryListView: View {
                         description: Text("Recorded sessions save automatically to On My iPhone / FIGHT.")
                     )
                 } else {
-                    ForEach(filteredWorkouts) { workout in
-                        NavigationLink {
-                            WorkoutDetailView(workout: workout)
-                        } label: {
-                            workoutRow(workout)
-                        }
-                    }
-                    .onDelete { offsets in
-                        for idx in offsets {
-                            workoutStore.delete(filteredWorkouts[idx])
+                    ForEach(weekGroups, id: \.start) { group in
+                        Section {
+                            ForEach(group.workouts) { workout in
+                                NavigationLink {
+                                    WorkoutDetailView(workout: workout)
+                                } label: {
+                                    workoutRow(workout)
+                                }
+                            }
+                            .onDelete { offsets in
+                                for idx in offsets {
+                                    workoutStore.delete(group.workouts[idx])
+                                }
+                            }
+                        } header: {
+                            weekHeader(group)
                         }
                     }
                 }

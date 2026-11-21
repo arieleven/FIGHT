@@ -14,6 +14,7 @@ struct LiveWorkoutView: View {
     @State private var showingFinishConfirm = false
     @State private var showingBagSettings = false
     @State private var choosingPlan = false
+    @State private var showingSetup = false
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -109,13 +110,11 @@ struct LiveWorkoutView: View {
                     } else {
                         heroBPMCard(currentZone: currentZone, profile: profile)
 
-                        workoutSetupCard
+                        quickStartRow
+
+                        setupSummaryCard
 
                         controlButtons
-
-                        AdvancedSection("More options", subtitle: "Drill type, ghost opponent, bag fine-tuning", key: "live.setup") {
-                            advancedSetup
-                        }
                     }
                 }
                 .padding()
@@ -136,6 +135,9 @@ struct LiveWorkoutView: View {
             }
             .sheet(isPresented: $showingBagSettings) {
                 BagSettingsSheet(prefs: $session.bagPrefs)
+            }
+            .sheet(isPresented: $showingSetup) {
+                setupSheet
             }
             .confirmationDialog(session.bagSessionComplete ? "Bag session complete" : "Finish workout?",
                                 isPresented: $showingFinishConfirm, titleVisibility: .visible) {
@@ -164,9 +166,12 @@ struct LiveWorkoutView: View {
             .onChange(of: navigation.pendingPrescription) { _, _ in applyPending() }
             .onChange(of: navigation.planToRun) { _, _ in applyPlanToRun() }
             .onChange(of: session.isRecording) { _, recording in
-                if recording { choosingPlan = false }
+                if recording { choosingPlan = false; showingSetup = false }
             }
-            .onChange(of: workoutStore.activeProfileID) { _, _ in session.syncFromProfile() }
+            .onChange(of: workoutStore.activeProfileID) { _, _ in
+                session.syncFromProfile()
+                session.restoreLastSetup()
+            }
             .onChange(of: session.requestFinishPrompt) { _, wants in
                 if wants {
                     showingFinishConfirm = true
@@ -256,7 +261,31 @@ struct LiveWorkoutView: View {
 
     // MARK: Banners
 
+    @ViewBuilder
     private var connectionBanner: some View {
+        if bleManager.isConnected && !bleManager.isSignalLost {
+            Button {
+                showingDeviceSheet = true
+            } label: {
+                HStack(spacing: 6) {
+                    Circle().fill(Color.green).frame(width: 8, height: 8)
+                    Text(bleManager.connectedDeviceName).lineLimit(1)
+                    if let battery = bleManager.batteryLevel {
+                        Text("· \(battery)%").foregroundStyle(battery > 20 ? Color.secondary : Color.orange)
+                    }
+                    Spacer()
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Sensor connected: \(bleManager.connectedDeviceName)")
+        } else {
+            fullConnectionBanner
+        }
+    }
+
+    private var fullConnectionBanner: some View {
         HStack(spacing: 12) {
             Circle()
                 .fill(bleManager.isConnected ? (bleManager.isSignalLost ? Color.orange : Color.green) : Color.orange)
@@ -858,16 +887,132 @@ struct LiveWorkoutView: View {
 
     // MARK: Controls
 
+    // MARK: Quick start
+
+    private enum QuickStart { case last, coach, plan }
+
+    private var quickStartSelection: QuickStart {
+        if session.queuedPlan != nil || choosingPlan { return .plan }
+        if session.activePlan != nil { return .coach }
+        return .last
+    }
+
+    private var quickStartRow: some View {
+        HStack(spacing: 8) {
+            quickChip("Last workout", icon: "arrow.counterclockwise", selected: quickStartSelection == .last) {
+                choosingPlan = false
+                session.unqueuePlan()
+                session.activePlan = nil
+                session.restoreLastSetup()
+            }
+            quickChip("Coach's pick", icon: "sparkles", selected: quickStartSelection == .coach) {
+                choosingPlan = false
+                session.unqueuePlan()
+                let report = CoachEngine.buildReport(workouts: workoutStore.workouts, readings: workoutStore.readinessReadings,
+                                                     profile: workoutStore.activeProfile,
+                                                     resolveSamples: { workoutStore.resolvedSamples(for: $0) })
+                session.apply(report.nextWorkout)
+            }
+            if !workoutStore.plans.isEmpty || session.queuedPlan != nil {
+                quickChip("Plan", icon: "list.bullet.rectangle", selected: quickStartSelection == .plan) {
+                    choosingPlan = true
+                    session.activePlan = nil
+                    showingSetup = true
+                }
+            }
+        }
+    }
+
+    private func quickChip(_ title: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(selected ? Color.green.opacity(0.18) : Color(.tertiarySystemFill), in: Capsule())
+                .foregroundStyle(selected ? Color.green : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var setupSummaryCard: some View {
+        Button {
+            showingSetup = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: session.queuedPlan != nil ? "list.bullet.rectangle.fill" : session.selectedCategory.icon)
+                    .font(.title2)
+                    .foregroundStyle(.green)
+                    .frame(width: 34)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.setupSummary)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                    Text(setupDetailLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("Change")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.green)
+            }
+            .card()
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Opens workout setup")
+    }
+
+    private var setupDetailLine: String {
+        if let plan = session.queuedPlan { return "\(plan.blocks.count) blocks · ~\(plan.plannedSeconds / 60) min" }
+        if let p = session.activePlan { return "Coach's pick · target \(p.targetLowBPM)–\(p.targetHighBPM) BPM" }
+        if session.bagEnabled { return "\(session.bagPrefs.tempo.displayName) · \(session.bagPrefs.totalMinutes) min" }
+        if session.roundTimerEnabled { return "\(formatDuration(TimeInterval(session.restDurationSeconds))) rest between rounds" }
+        return "Heart rate, zones and calories"
+    }
+
+    private var setupSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 16) {
+                    workoutSetupCard
+                    AdvancedSection("More options", subtitle: "Drill type, ghost opponent, bag fine-tuning", key: "live.setup") {
+                        advancedSetup
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Workout Setup")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showingSetup = false }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
     private var controlButtons: some View {
         VStack(spacing: 10) {
             if !session.isRecording {
                 Button {
                     session.startWorkout()
                 } label: {
-                    Label(session.queuedPlan != nil ? "Start Plan" : (session.selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start Workout"), systemImage: "play.fill")
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                    VStack(spacing: 2) {
+                        Label(session.queuedPlan != nil ? "Start Plan" : (session.selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start"), systemImage: "play.fill")
+                            .font(.title3.weight(.bold))
+                        Text(session.setupSummary)
+                            .font(.caption.weight(.semibold))
+                            .opacity(0.85)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)

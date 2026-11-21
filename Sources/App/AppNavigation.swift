@@ -4,7 +4,7 @@ import SwiftUI
 @MainActor
 final class AppNavigation: ObservableObject {
     enum Tab: Hashable {
-        case live, coach, camp, history, profile
+        case live, coach, history, profile
     }
 
     /// The app's navigation, for Siri and Shortcuts.

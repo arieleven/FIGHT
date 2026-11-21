@@ -12,25 +12,22 @@ struct FightApp: App {
         WindowGroup {
             TabView(selection: $navigation.selectedTab) {
                 LiveWorkoutView()
-                    .tabItem { Label("Live", systemImage: "heart.fill") }
+                    .tabItem { Label("Train", systemImage: "heart.fill") }
                     .tag(AppNavigation.Tab.live)
 
                 CoachView()
                     .tabItem { Label("Coach", systemImage: "gauge.with.dots.needle.67percent") }
                     .tag(AppNavigation.Tab.coach)
 
-                CampView()
-                    .tabItem { Label("Camp", systemImage: "calendar.badge.clock") }
-                    .tag(AppNavigation.Tab.camp)
-
                 HistoryListView()
                     .tabItem { Label("History", systemImage: "list.bullet.clipboard") }
                     .tag(AppNavigation.Tab.history)
 
                 ProfileSettingsView()
-                    .tabItem { Label("Fighter", systemImage: "person.crop.circle") }
+                    .tabItem { Label("You", systemImage: "person.crop.circle") }
                     .tag(AppNavigation.Tab.profile)
             }
+            .modifier(FirstRunModifier())
             .environmentObject(bleManager)
             .environmentObject(workoutStore)
             .environmentObject(healthKit)

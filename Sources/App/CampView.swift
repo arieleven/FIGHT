@@ -22,7 +22,6 @@ struct CampView: View {
         let plan = CampPlanner.buildPlan(profile: profile, workouts: workoutStore.workouts)
         let weight = CampPlanner.weightStatus(weighIns: workoutStore.weighIns, readings: workoutStore.readinessReadings, profile: profile)
 
-        NavigationStack {
             ScrollView {
                 VStack(spacing: 16) {
                     fightHeader(profile: profile, plan: plan)
@@ -90,7 +89,6 @@ struct CampView: View {
             } message: {
                 Text(reportError ?? "")
             }
-        }
     }
 
     // MARK: Fight night
@@ -683,7 +681,7 @@ struct FightSetupSheet: View {
                     HStack {
                         TextField("Fight weight", text: $targetText)
                             .keyboardType(.decimalPad)
-                        Text(WeightUnits.unit(workoutStore.activeProfile.useImperial)).foregroundStyle(.secondary)
+                        WeightUnitChip(text: $targetText)
                     }
                 } header: {
                     Text("Fight weight target")
@@ -767,7 +765,7 @@ struct WeighInSheet: View {
                             .keyboardType(.decimalPad)
                             .font(.system(.largeTitle, design: .rounded).weight(.bold))
                             .focused($weightFocused)
-                        Text(WeightUnits.unit(workoutStore.activeProfile.useImperial)).font(.title2).foregroundStyle(.secondary)
+                        WeightUnitChip(text: $weightText)
                     }
                     DatePicker("Time", selection: $date, in: ...Date())
                 } footer: {
@@ -879,5 +877,28 @@ struct WeighInHistoryView: View {
                 ContentUnavailableView("No weigh-ins", systemImage: "scalemass")
             }
         }
+    }
+}
+
+
+/// kg ⇄ lb chip for a weight text field: flipping it converts the typed number too.
+struct WeightUnitChip: View {
+    @EnvironmentObject var workoutStore: WorkoutStore
+    @Binding var text: String
+
+    var body: some View {
+        UnitChip(metric: "kg", imperial: "lb", isImperial: Binding(
+            get: { workoutStore.activeProfile.useImperial },
+            set: { newValue in
+                let old = workoutStore.activeProfile.useImperial
+                guard newValue != old else { return }
+                if let raw = Double(text.replacingOccurrences(of: ",", with: ".")) {
+                    text = WeightUnits.number(WeightUnits.toKg(raw, old), newValue)
+                }
+                var p = workoutStore.activeProfile
+                p.useImperial = newValue
+                workoutStore.activeProfile = p
+            }
+        ), accessibilityName: "Weight unit")
     }
 }

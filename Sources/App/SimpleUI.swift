@@ -73,3 +73,55 @@ struct CardBackground: ViewModifier {
 extension View {
     func card(tint: Color? = nil) -> some View { modifier(CardBackground(tint: tint)) }
 }
+
+/// A small unit switch that sits next to a number: tap it or swipe it up/down
+/// to roll between two units (e.g. kg ⇄ lb). The value itself is stored in one
+/// unit, so switching never changes the underlying number.
+struct UnitChip: View {
+    let metric: String
+    let imperial: String
+    @Binding var isImperial: Bool
+    var accessibilityName = "Unit"
+
+    @State private var direction: Edge = .bottom
+
+    var body: some View {
+        let label = isImperial ? imperial : metric
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.subheadline.weight(.bold))
+                .id(label)
+                .transition(.asymmetric(insertion: .move(edge: direction).combined(with: .opacity),
+                                        removal: .move(edge: direction == .bottom ? .top : .bottom).combined(with: .opacity)))
+            Image(systemName: "chevron.up.chevron.down")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .frame(minWidth: 52, minHeight: 32)
+        .padding(.horizontal, 6)
+        .background(Color(.tertiarySystemFill), in: Capsule())
+        .clipShape(Capsule())
+        .contentShape(Capsule())
+        .onTapGesture { flip(up: true) }
+        .gesture(
+            DragGesture(minimumDistance: 8).onEnded { v in
+                if abs(v.translation.height) > abs(v.translation.width) {
+                    flip(up: v.translation.height < 0)
+                }
+            }
+        )
+        .sensoryFeedback(.selection, trigger: isImperial)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityName)
+        .accessibilityValue(label)
+        .accessibilityHint("Swipe up or down to change unit")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAdjustableAction { _ in flip(up: true) }
+        .accessibilityAction { flip(up: true) }
+    }
+
+    private func flip(up: Bool) {
+        direction = up ? .bottom : .top
+        withAnimation(.snappy(duration: 0.25)) { isImperial.toggle() }
+    }
+}

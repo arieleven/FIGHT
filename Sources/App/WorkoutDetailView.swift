@@ -587,7 +587,7 @@ struct WorkoutDetailView: View {
                     color: .red
                 )
                 metricTile(
-                    title: "TRAINING LOAD (TRIMP)",
+                    title: "TRAINING LOAD",
                     value: "\(Int(workout.trimpScore))",
                     subtitle: workout.trimpScore > 120 ? "High fight load" : "Moderate load",
                     color: .orange

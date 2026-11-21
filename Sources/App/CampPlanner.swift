@@ -13,6 +13,21 @@ enum WeightUnits {
     static func text(_ kg: Double, _ imperial: Bool) -> String { "\(number(kg, imperial)) \(unit(imperial))" }
 }
 
+enum HeightUnits {
+    static let cmPerInch = 2.54
+    /// Feet and whole inches, e.g. (5, 9).
+    static func feetInches(_ cm: Double) -> (feet: Int, inches: Int) {
+        let total = Int((cm / cmPerInch).rounded())
+        return (total / 12, total % 12)
+    }
+    static func cm(feet: Int, inches: Int) -> Double { Double(feet * 12 + inches) * cmPerInch }
+    static func text(_ cm: Double, _ imperial: Bool) -> String {
+        guard imperial else { return "\(Int(cm.rounded())) cm" }
+        let fi = feetInches(cm)
+        return "\(fi.feet)′ \(fi.inches)″"
+    }
+}
+
 // MARK: - Weigh-ins
 
 struct WeighIn: Codable, Identifiable, Equatable {

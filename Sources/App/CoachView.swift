@@ -15,6 +15,7 @@ struct CoachView: View {
     @State private var showingBreathing = false
     @State private var showingSoreness = false
     @State private var shareImage: ShareableImage?
+    @State private var showingFightSetup = false
 
     var body: some View {
         NavigationStack {
@@ -45,6 +46,7 @@ struct CoachView: View {
                 }
             }
             .sheet(isPresented: $showingBreathing) { BreathingTrainerView() }
+            .sheet(isPresented: $showingFightSetup) { FightSetupSheet() }
             .sheet(isPresented: $showingSoreness, onDismiss: refresh) { SorenessLogSheet() }
             .sheet(item: $shareImage) { item in ShareSheet(items: [item.image]) }
             .sheet(item: $selectedMetric) { metric in
@@ -102,8 +104,8 @@ struct CoachView: View {
 
                 if let plan = CampPlanner.buildPlan(profile: workoutStore.activeProfile, workouts: workoutStore.workouts),
                    let week = plan.currentWeek {
-                    Button {
-                        navigation.selectedTab = .camp
+                    NavigationLink {
+                        CampView()
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: "calendar.badge.clock")
@@ -126,6 +128,8 @@ struct CoachView: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityHint("Opens your fight camp plan")
+                } else {
+                    noFightCard
                 }
 
                 if report.hasEnoughData {
@@ -260,12 +264,55 @@ struct CoachView: View {
 
     // MARK: Next workout
 
+    /// Camp lives inside Coach: one card until a fight is set, then the full camp screen.
+    @ViewBuilder
+    private var noFightCard: some View {
+        let profile = workoutStore.activeProfile
+        NavigationLink {
+            CampView()
+        } label: {
+            if let fight = profile.fightDate, fight > Date() {
+                campLinkLabel(title: "Fight on \(fight.formatted(date: .abbreviated, time: .omitted))",
+                              detail: "Your camp plan, weight cut and taper.")
+            } else {
+                campLinkLabel(title: "Got a fight?", detail: "Set the date to get a camp plan, weight cut and taper. Weigh-ins live here too.")
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func campLinkLabel(title: String, detail: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "calendar.badge.clock")
+                .font(.title3)
+                .foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline.weight(.bold)).foregroundStyle(.primary)
+                Text(detail).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    /// The one-line answer to "what should I do today?".
+    private func todayVerdict(_ p: WorkoutPrescription) -> (text: String, color: Color, icon: String) {
+        if p.isRestDay { return ("TODAY: REST & RECOVER", .cyan, "bed.double.fill") }
+        if p.targetHighBPM > workoutStore.activeProfile.activeZones.z3Max { return ("TODAY: TRAIN HARD", .red, "flame.fill") }
+        return ("TODAY: GO EASY", .green, "leaf.fill")
+    }
+
     private func nextWorkoutCard(_ p: WorkoutPrescription) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Label(p.isRestDay ? "TODAY: RECOVER" : "NEXT SESSION", systemImage: p.isRestDay ? "bed.double.fill" : "calendar.badge.plus")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(p.isRestDay ? .cyan : .green)
+                let verdict = todayVerdict(p)
+                Label(verdict.text, systemImage: verdict.icon)
+                    .font(.subheadline.weight(.heavy))
+                    .foregroundStyle(verdict.color)
                 Spacer()
                 Text("~\(p.durationMinutes) min")
                     .font(.caption.weight(.semibold))
@@ -295,7 +342,7 @@ struct CoachView: View {
             Button {
                 navigation.load(p)
             } label: {
-                Label("Load in Live Tab", systemImage: "play.circle.fill")
+                Label(p.isRestDay ? "Do this recovery session" : "Do this session", systemImage: "play.circle.fill")
                     .font(.headline)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
@@ -414,7 +461,7 @@ struct CoachView: View {
             HStack(spacing: 16) {
                 loadStat("Fitness", report.load.last?.fitness ?? 0, .blue)
                 loadStat("Fatigue", report.load.last?.fatigue ?? 0, .pink)
-                loadStat("Form", report.currentForm, report.currentForm >= -10 ? .green : .orange, signed: true)
+                loadStat("Freshness", report.currentForm, report.currentForm >= -10 ? .green : .orange, signed: true)
             }
 
             Chart {
@@ -439,7 +486,7 @@ struct CoachView: View {
             .accessibilityLabel("Training load over the last six weeks")
 
             if showingLoadInfo {
-                Text("Bars are each day's training load (TRIMP). Fitness is your 42-day average load, and fatigue your 7-day average. Form = fitness − fatigue: below −20 means you're overreaching, and between −10 and +5 is ideal for productive training. Taper toward +5 to +15 for fight night.")
+                Text("Bars are each day's training load (TRIMP). Fitness is your 42-day average load, and fatigue your 7-day average. Freshness = fitness − fatigue: below −20 means you're overreaching, and between −10 and +5 is ideal for productive training. Taper toward +5 to +15 for fight night.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

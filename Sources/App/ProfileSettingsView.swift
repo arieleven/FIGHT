@@ -25,8 +25,6 @@ struct ProfileSettingsView: View {
         let z4Lower = zones.z3Max + 5
         let z4Upper = max(z4Lower, profile.effectiveMaxHR - 5)
 
-        let weightSteps: [Double] = stride(from: 40.0, through: 180.0, by: 0.5).map { $0 }
-
         NavigationStack {
             Form {
                 Section("Fighter") {
@@ -53,7 +51,6 @@ struct ProfileSettingsView: View {
                 }
 
                 Section("Your Body") {
-                    Toggle("Use pounds (lb)", isOn: binding(for: \.useImperial))
                     HStack {
                         Text("Name")
                         Spacer()
@@ -78,34 +75,16 @@ struct ProfileSettingsView: View {
                         .frame(height: 130)
                     }
 
-                    wheelValueRow(title: "Height", valueText: "\(Int(round(profile.heightCm))) cm", wheel: .height)
+                    wheelValueRow(title: "Height", valueText: profile.heightImperial ? HeightUnits.text(profile.heightCm, true) : "\(Int(round(profile.heightCm)))",
+                                  wheel: .height, unit: heightChip)
                     if expandedWheel == .height {
-                        Picker("Height", selection: Binding(
-                            get: { Int(round(profile.heightCm)) },
-                            set: { newVal in
-                                var updated = workoutStore.activeProfile
-                                updated.heightCm = Double(newVal)
-                                updated.sanitize()
-                                workoutStore.activeProfile = updated
-                            }
-                        )) {
-                            ForEach(120...230, id: \.self) { cm in
-                                Text("\(cm) cm").tag(cm)
-                            }
-                        }
-                        .pickerStyle(.wheel)
-                        .frame(height: 130)
+                        heightWheel(profile)
                     }
 
-                    wheelValueRow(title: "Current Weight", valueText: WeightUnits.text(profile.weightKg, profile.useImperial), wheel: .weight)
+                    wheelValueRow(title: "Current Weight", valueText: WeightUnits.number(profile.weightKg, profile.useImperial),
+                                  wheel: .weight, unit: weightChip)
                     if expandedWheel == .weight {
-                        Picker("Current Weight", selection: binding(for: \.weightKg)) {
-                            ForEach(weightSteps, id: \.self) { kg in
-                                Text(WeightUnits.text(kg, profile.useImperial)).tag(kg)
-                            }
-                        }
-                        .pickerStyle(.wheel)
-                        .frame(height: 130)
+                        weightWheel("Current Weight", \.weightKg, imperial: profile.useImperial)
                     }
 
                     wheelValueRow(title: "Resting HR", valueText: "\(profile.restingHR) BPM", wheel: .restingHR)
@@ -143,15 +122,10 @@ struct ProfileSettingsView: View {
                         }
                     }
 
-                    wheelValueRow(title: "Target Fight Weight", valueText: WeightUnits.text(profile.targetFightWeightKg, profile.useImperial), wheel: .targetWeight)
+                    wheelValueRow(title: "Target Fight Weight", valueText: WeightUnits.number(profile.targetFightWeightKg, profile.useImperial),
+                                  wheel: .targetWeight, unit: weightChip)
                     if expandedWheel == .targetWeight {
-                        Picker("Target Fight Weight", selection: binding(for: \.targetFightWeightKg)) {
-                            ForEach(weightSteps, id: \.self) { kg in
-                                Text(WeightUnits.text(kg, profile.useImperial)).tag(kg)
-                            }
-                        }
-                        .pickerStyle(.wheel)
-                        .frame(height: 130)
+                        weightWheel("Target Fight Weight", \.targetFightWeightKg, imperial: profile.useImperial)
                     }
 
                     HStack {
@@ -336,25 +310,103 @@ struct ProfileSettingsView: View {
         }
     }
 
-    private func wheelValueRow(title: String, valueText: String, wheel: ActiveWheelPicker) -> some View {
-        Button {
-            withAnimation(.snappy) {
-                expandedWheel = (expandedWheel == wheel) ? nil : wheel
+    private var weightChip: UnitChip {
+        UnitChip(metric: "kg", imperial: "lb", isImperial: binding(for: \.useImperial), accessibilityName: "Weight unit")
+    }
+
+    private var heightChip: UnitChip {
+        UnitChip(metric: "cm", imperial: "ft", isImperial: binding(for: \.heightImperial), accessibilityName: "Height unit")
+    }
+
+    private func wheelValueRow(title: String, valueText: String, wheel: ActiveWheelPicker, unit: UnitChip? = nil) -> some View {
+        HStack(spacing: 10) {
+            Button {
+                withAnimation(.snappy) {
+                    expandedWheel = (expandedWheel == wheel) ? nil : wheel
+                }
+            } label: {
+                HStack {
+                    Text(title)
+                        .foregroundStyle(.primary)
+                    Spacer()
+                    Text(valueText)
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .foregroundStyle(expandedWheel == wheel ? .orange : .cyan)
+                    if unit == nil {
+                        Image(systemName: expandedWheel == wheel ? "chevron.up" : "chevron.down")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
             }
-        } label: {
-            HStack {
-                Text(title)
-                    .foregroundStyle(.primary)
-                Spacer()
-                Text(valueText)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(expandedWheel == wheel ? .orange : .cyan)
-                Image(systemName: expandedWheel == wheel ? "chevron.up" : "chevron.down")
-                    .font(.caption2.bold())
-                    .foregroundStyle(.secondary)
+            .buttonStyle(.borderless)
+            if let unit {
+                unit
             }
         }
+    }
+
+    /// Weight wheel in 0.5 kg or 0.5 lb steps; always stores kilograms.
+    private func weightWheel(_ title: String, _ keyPath: WritableKeyPath<AthleteProfile, Double>, imperial: Bool) -> some View {
+        let steps: [Double] = imperial
+            ? stride(from: 90.0, through: 400.0, by: 0.5).map { $0 }
+            : stride(from: 40.0, through: 180.0, by: 0.5).map { $0 }
+        let selection = Binding<Double>(
+            get: { (WeightUnits.value(workoutStore.activeProfile[keyPath: keyPath], imperial) * 2).rounded() / 2 },
+            set: { v in
+                var p = workoutStore.activeProfile
+                p[keyPath: keyPath] = WeightUnits.toKg(v, imperial)
+                workoutStore.activeProfile = p
+            }
+        )
+        return Picker(title, selection: selection) {
+            ForEach(steps, id: \.self) { v in
+                Text(String(format: "%.1f %@", v, WeightUnits.unit(imperial))).tag(v)
+            }
+        }
+        .pickerStyle(.wheel)
+        .frame(height: 130)
+    }
+
+    /// Height wheel: centimetres, or feet + inches side by side.
+    @ViewBuilder
+    private func heightWheel(_ profile: AthleteProfile) -> some View {
+        if profile.heightImperial {
+            let fi = HeightUnits.feetInches(profile.heightCm)
+            HStack(spacing: 0) {
+                Picker("Feet", selection: Binding(get: { fi.feet }, set: { setHeight(HeightUnits.cm(feet: $0, inches: fi.inches)) })) {
+                    ForEach(4...7, id: \.self) { Text("\($0) ft").tag($0) }
+                }
+                .pickerStyle(.wheel)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                Picker("Inches", selection: Binding(get: { fi.inches }, set: { setHeight(HeightUnits.cm(feet: fi.feet, inches: $0)) })) {
+                    ForEach(0...11, id: \.self) { Text("\($0) in").tag($0) }
+                }
+                .pickerStyle(.wheel)
+                .frame(maxWidth: .infinity)
+                .clipped()
+            }
+            .frame(height: 130)
+        } else {
+            Picker("Height", selection: Binding(get: { Int(round(profile.heightCm)) }, set: { setHeight(Double($0)) })) {
+                ForEach(120...230, id: \.self) { cm in
+                    Text("\(cm) cm").tag(cm)
+                }
+            }
+            .pickerStyle(.wheel)
+            .frame(height: 130)
+        }
+    }
+
+    private func setHeight(_ cm: Double) {
+        var p = workoutStore.activeProfile
+        p.heightCm = cm
+        p.sanitize()
+        workoutStore.activeProfile = p
     }
 
     private func zoneRow(label: String, range: String, color: Color) -> some View {
