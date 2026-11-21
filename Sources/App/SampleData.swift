@@ -32,6 +32,12 @@ enum SampleData {
         p.restingHR = 52
         p.campPhase = .fightCamp
         p.campLengthWeeks = 8
+        p.bio.nickname = "The Engine"
+        p.bio.wins = 7
+        p.bio.losses = 2
+        p.bio.finishes = 4
+        p.bio.discipline = "Muay Thai"
+        p.bio.reachCm = 183
         let cal = Calendar.current
         p.fightDate = cal.date(bySettingHour: 20, minute: 0, second: 0, of: now.addingTimeInterval(33 * 86400))
         p.sanitize()

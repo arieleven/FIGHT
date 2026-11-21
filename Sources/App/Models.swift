@@ -108,6 +108,104 @@ struct AudioCoachSettings: Codable, Equatable {
     }
 }
 
+// MARK: - Fighter card bio
+
+/// The fight-record details shown on the fighter card (UFC-style athlete card).
+struct FighterBio: Codable, Equatable {
+    enum Level: String, Codable, CaseIterable, Identifiable {
+        case amateur = "Amateur", pro = "Pro"
+        var id: String { rawValue }
+    }
+
+    enum Corner: String, Codable, CaseIterable, Identifiable {
+        case red = "Red", blue = "Blue", gold = "Gold"
+        var id: String { rawValue }
+    }
+
+    enum Division: String, Codable, CaseIterable, Identifiable {
+        case strawweight = "Strawweight", flyweight = "Flyweight", bantamweight = "Bantamweight"
+        case featherweight = "Featherweight", lightweight = "Lightweight", welterweight = "Welterweight"
+        case middleweight = "Middleweight", lightHeavyweight = "Light Heavyweight", heavyweight = "Heavyweight"
+        var id: String { rawValue }
+
+        /// Upper weight limit in kg (unified MMA rules).
+        var limitKg: Double {
+            switch self {
+            case .strawweight: return 52.2
+            case .flyweight: return 56.7
+            case .bantamweight: return 61.2
+            case .featherweight: return 65.8
+            case .lightweight: return 70.3
+            case .welterweight: return 77.1
+            case .middleweight: return 83.9
+            case .lightHeavyweight: return 93.0
+            case .heavyweight: return 120.2
+            }
+        }
+
+        /// The lightest division a fight weight fits into.
+        static func suggested(forKg kg: Double) -> Division {
+            allCases.first { kg <= $0.limitKg + 0.05 } ?? .heavyweight
+        }
+    }
+
+    var nickname = ""
+    var level: Level = .amateur
+    var wins = 0
+    var losses = 0
+    var draws = 0
+    var finishes = 0
+    /// nil = suggest from the fight-weight target.
+    var division: Division?
+    var reachCm: Double?
+    var gym = ""
+    /// ISO region code, e.g. "IL", "GB".
+    var country = ""
+    var discipline = "Kickboxing"
+    var corner: Corner = .red
+    var showFightFitness = true
+    var showGasTank = true
+    var showBestRecovery = true
+
+    var record: String { "\(wins)-\(losses)-\(draws)" }
+
+    /// e.g. "5 by KO / TKO" when there are finishes.
+    var finishesText: String? { finishes > 0 ? "\(min(finishes, wins)) by KO / TKO" : nil }
+
+    /// Flag emoji from a two-letter region code.
+    static func flag(_ code: String) -> String {
+        let up = code.uppercased()
+        guard up.count == 2, up.allSatisfy({ $0.isASCII && $0.isLetter }) else { return "" }
+        return String(String.UnicodeScalarView(up.unicodeScalars.compactMap { UnicodeScalar(127397 + $0.value) }))
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        nickname = (try? c.decodeIfPresent(String.self, forKey: .nickname)) ?? ""
+        level = (try? c.decodeIfPresent(Level.self, forKey: .level)) ?? .amateur
+        wins = (try? c.decodeIfPresent(Int.self, forKey: .wins)) ?? 0
+        losses = (try? c.decodeIfPresent(Int.self, forKey: .losses)) ?? 0
+        draws = (try? c.decodeIfPresent(Int.self, forKey: .draws)) ?? 0
+        finishes = (try? c.decodeIfPresent(Int.self, forKey: .finishes)) ?? 0
+        division = try? c.decodeIfPresent(Division.self, forKey: .division)
+        reachCm = try? c.decodeIfPresent(Double.self, forKey: .reachCm)
+        gym = (try? c.decodeIfPresent(String.self, forKey: .gym)) ?? ""
+        country = (try? c.decodeIfPresent(String.self, forKey: .country)) ?? ""
+        discipline = (try? c.decodeIfPresent(String.self, forKey: .discipline)) ?? "Kickboxing"
+        corner = (try? c.decodeIfPresent(Corner.self, forKey: .corner)) ?? .red
+        showFightFitness = (try? c.decodeIfPresent(Bool.self, forKey: .showFightFitness)) ?? true
+        showGasTank = (try? c.decodeIfPresent(Bool.self, forKey: .showGasTank)) ?? true
+        showBestRecovery = (try? c.decodeIfPresent(Bool.self, forKey: .showBestRecovery)) ?? true
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case nickname, level, wins, losses, draws, finishes, division, reachCm, gym, country, discipline
+        case corner, showFightFitness, showGasTank, showBestRecovery
+    }
+}
+
 struct AthleteProfile: Codable, Identifiable, Equatable {
     var id: UUID = UUID()
     var name: String = "Fighter"
@@ -134,13 +232,14 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var campHistory: [CampRecord] = []
     var trackHeadMovement = true
     var guidedBreathing = false
+    var bio = FighterBio()
 
     enum CodingKeys: String, CodingKey {
         case id, name, sex, age, weightKg, heightCm, targetFightWeightKg
         case restingHR, useAutoMaxHR, maxHR, lactateThresholdHR, zoneMethod
         case manualZones, campPhase, audioCoach
         case fightDate, campLengthWeeks, bagPreferences, useImperial
-        case campHistory, trackHeadMovement, guidedBreathing, heightImperial
+        case campHistory, trackHeadMovement, guidedBreathing, heightImperial, bio
     }
 
     init() {}
@@ -167,6 +266,7 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         bagPreferences = (try? c.decodeIfPresent(BagPreferences.self, forKey: .bagPreferences)) ?? BagPreferences()
         useImperial = (try? c.decodeIfPresent(Bool.self, forKey: .useImperial)) ?? false
         heightImperial = (try? c.decodeIfPresent(Bool.self, forKey: .heightImperial)) ?? useImperial
+        bio = (try? c.decodeIfPresent(FighterBio.self, forKey: .bio)) ?? FighterBio()
         campHistory = (try? c.decodeIfPresent([CampRecord].self, forKey: .campHistory)) ?? []
         trackHeadMovement = (try? c.decodeIfPresent(Bool.self, forKey: .trackHeadMovement)) ?? true
         guidedBreathing = (try? c.decodeIfPresent(Bool.self, forKey: .guidedBreathing)) ?? false

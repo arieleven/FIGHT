@@ -90,7 +90,7 @@ struct PickedMovie: Transferable {
 // MARK: - Card data
 
 enum StoryCardKind: String, CaseIterable, Identifiable {
-    case mainEvent, rounds, tape, poster, overlay, fighter, progress, record, countdown
+    case mainEvent, rounds, tape, poster, overlay, profile, fighter, progress, record, countdown
     var id: String { rawValue }
 
     var title: String {
@@ -100,7 +100,8 @@ enum StoryCardKind: String, CaseIterable, Identifiable {
         case .tape: return "Tale of the Tape"
         case .poster: return "Fight Poster"
         case .overlay: return "Overlay"
-        case .fighter: return "Fighter"
+        case .profile: return "Fighter Card"
+        case .fighter: return "Fight Fitness"
         case .progress: return "Progress"
         case .record: return "Record"
         case .countdown: return "Countdown"
@@ -119,6 +120,9 @@ typealias StoryStat = (value: String, label: String, good: Bool)
 /// Everything the cards show, computed once when the share screen opens.
 struct StoryData {
     var name: String
+    var profile = AthleteProfile()
+    var photo: UIImage?
+    var cardStats = FighterCardStats()
     var workout: SavedWorkout?
     var comparison: SavedWorkout?
     var workoutRecords: [PersonalRecord] = []
@@ -142,6 +146,9 @@ struct StoryData {
         let profile = store.activeProfile
         let mine = store.workouts.filter { $0.profileID == profile.id }
         var d = StoryData(name: profile.name)
+        d.profile = profile
+        d.photo = store.fighterPhoto(for: profile.id)
+        d.cardStats = FighterCardStats.current(store: store, profile: profile)
         d.report = CoachEngine.buildReport(workouts: store.workouts, readings: store.activeReadings, profile: profile,
                                            resolveSamples: { store.resolvedSamples(for: $0) })
         d.gasTank = GasTank.evaluate(workouts: mine, profile: profile)?.headline
@@ -208,6 +215,7 @@ struct StoryData {
             k.append(.poster)
             k.append(.overlay)
         }
+        k.append(.profile)
         if report?.fightFitness != nil { k.append(.fighter) }
         k.append(.progress)
         if latestRecord != nil || !workoutRecords.isEmpty { k.append(.record) }
@@ -386,6 +394,7 @@ struct StoryCard: View {
         case .tape: tape
         case .poster: PosterCard(data: data, privacy: privacy)
         case .overlay: OverlayCard(data: data, oneLine: overlayOneLine, dark: darkInk)
+        case .profile: FighterProfileCard(profile: data.profile, photo: data.photo, stats: data.cardStats, hideName: privacy.hideName)
         case .fighter: fighter
         case .progress: progress
         case .record: record

@@ -270,3 +270,31 @@ final class UnitTests: XCTestCase {
         XCTAssertTrue(p.heightImperial, "people who chose pounds get feet too")
     }
 }
+
+final class FighterBioTests: XCTestCase {
+
+    func testFlagFromRegionCode() {
+        XCTAssertEqual(FighterBio.flag("il"), "🇮🇱")
+        XCTAssertEqual(FighterBio.flag("GB"), "🇬🇧")
+        XCTAssertEqual(FighterBio.flag(""), "")
+        XCTAssertEqual(FighterBio.flag("123"), "")
+    }
+
+    func testDivisionSuggestedFromFightWeight() {
+        XCTAssertEqual(FighterBio.Division.suggested(forKg: 70.0), .lightweight)
+        XCTAssertEqual(FighterBio.Division.suggested(forKg: 70.3), .lightweight)
+        XCTAssertEqual(FighterBio.Division.suggested(forKg: 72), .welterweight)
+        XCTAssertEqual(FighterBio.Division.suggested(forKg: 150), .heavyweight)
+    }
+
+    func testRecordAndOldProfilesWithoutBio() throws {
+        var bio = FighterBio()
+        bio.wins = 12; bio.losses = 3; bio.finishes = 5
+        XCTAssertEqual(bio.record, "12-3-0")
+        XCTAssertEqual(bio.finishesText, "5 by KO / TKO")
+        let p = try JSONDecoder().decode(AthleteProfile.self, from: Data(#"{"name":"Old"}"#.utf8))
+        XCTAssertEqual(p.bio, FighterBio())
+        let round = try JSONDecoder().decode(AthleteProfile.self, from: JSONEncoder().encode({ var x = p; x.bio = bio; return x }()))
+        XCTAssertEqual(round.bio.record, "12-3-0")
+    }
+}

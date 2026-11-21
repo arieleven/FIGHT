@@ -29,6 +29,10 @@ struct ProfileSettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    FighterCardRow()
+                }
+
+                Section {
                     Picker("Fighter", selection: $workoutStore.activeProfileID) {
                         ForEach(workoutStore.profiles) { p in
                             Text(p.name).tag(p.id)

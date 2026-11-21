@@ -1,5 +1,6 @@
 import Foundation
 import Compression
+import UIKit
 
 @MainActor
 final class WorkoutStore: ObservableObject {
@@ -597,6 +598,35 @@ final class WorkoutStore: ObservableObject {
         p.sanitize()
         profiles[idx] = p
         saveProfilesToDisk()
+    }
+
+    // MARK: - Fighter card photo
+
+    /// Bumped when a fighter photo changes, so cards redraw.
+    @Published var photoVersion = 0
+
+    private func fighterPhotoURL(_ id: UUID) -> URL {
+        let dir = documentsDirectory.appendingPathComponent("Body", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("fighter-photo-\(id.uuidString).jpg")
+    }
+
+    func fighterPhoto(for id: UUID) -> UIImage? {
+        UIImage(contentsOfFile: fighterPhotoURL(id).path)
+    }
+
+    func setFighterPhoto(_ image: UIImage?, for id: UUID) {
+        let url = fighterPhotoURL(id)
+        if let image {
+            // Keep it light: the card never needs more than ~1200 px.
+            let scale = min(1, 1200 / max(image.size.width, image.size.height))
+            let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+            let resized = UIGraphicsImageRenderer(size: size).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+            try? resized.jpegData(compressionQuality: 0.85)?.write(to: url, options: .atomic)
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
+        photoVersion += 1
     }
 
     // MARK: - Soreness log
