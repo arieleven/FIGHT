@@ -99,7 +99,11 @@ struct OnboardingView: View {
     private var aboutYou: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text("FIGHT").font(.system(size: 30, weight: .black, design: .rounded)).foregroundStyle(.red)
+                Image("AppLogo")
+                    .resizable()
+                    .frame(width: 72, height: 72)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .accessibilityLabel("FIGHT")
                 header("Hi, fighter", "Four quick questions so FIGHT can set your heart-rate zones.")
                 field {
                     TextField("Your name", text: $draft.name)
