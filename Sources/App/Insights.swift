@@ -688,3 +688,201 @@ enum BreathingEffect {
         return Int(min(100, max(0, (swing - 3) / 12 * 100)).rounded())
     }
 }
+
+// MARK: - Automatic rounds
+
+/// Finds rounds from the heart-rate pattern when no round timer was used
+/// (sparring, pads, class): sustained work blocks separated by recovery dips.
+enum AutoRounds {
+    static func detect(samples: [HeartRatePoint], profile: AthleteProfile) -> [RoundStat] {
+        let pts = samples.sorted { $0.elapsedSeconds < $1.elapsedSeconds }
+        guard pts.count >= 360 else { return [] }
+        // 1 Hz series, smoothed over 15 s.
+        let raw = pts.map { Double($0.bpm) }
+        var smooth = [Double](repeating: 0, count: raw.count)
+        var run = 0.0
+        for i in raw.indices {
+            run += raw[i]
+            if i >= 15 { run -= raw[i - 15] }
+            smooth[i] = run / Double(min(i + 1, 15))
+        }
+        let sorted = smooth.sorted()
+        let p20 = sorted[sorted.count / 5], p90 = sorted[sorted.count * 9 / 10]
+        guard p90 - p20 >= 20 else { return [] }   // no clear work/rest rhythm
+        let threshold = max(Double(profile.activeZones.z2Max), p20 + (p90 - p20) * 0.55)
+
+        // Work blocks above threshold, bridging dips shorter than 20 s.
+        var blocks: [(start: Int, end: Int)] = []
+        var start: Int?
+        var below = 0
+        for i in smooth.indices {
+            if smooth[i] >= threshold {
+                if start == nil { start = i }
+                below = 0
+            } else if let s = start {
+                below += 1
+                if below > 20 {
+                    blocks.append((s, i - below))
+                    start = nil
+                    below = 0
+                }
+            }
+        }
+        if let s = start { blocks.append((s, smooth.count - 1 - below)) }
+        let rounds = blocks.filter { $0.end - $0.start >= 60 && $0.end - $0.start <= 600 }
+        guard rounds.count >= 2 else { return [] }
+
+        return rounds.enumerated().map { n, b in
+            let slice = pts[b.start...b.end].map(\.bpm)
+            let endBPM = pts[b.end].bpm
+            let after = min(pts.count - 1, b.end + 60)
+            let nextStart = n + 1 < rounds.count ? rounds[n + 1].start : Int.max
+            let drop: Int? = after < nextStart && after - b.end >= 50 ? max(0, endBPM - pts[after].bpm) : nil
+            return RoundStat(roundNumber: n + 1, startElapsed: pts[b.start].elapsedSeconds, endElapsed: pts[b.end].elapsedSeconds,
+                             avgBPM: slice.reduce(0, +) / slice.count, peakBPM: slice.max() ?? endBPM, stoolDropBPM: drop)
+        }
+    }
+}
+
+// MARK: - Defensive redline (AirPods + heart rate)
+
+struct DefensiveRedline {
+    let redlineBPM: Int
+    let freshPerMinute: Double
+    let tiredPerMinute: Double
+    let rounds: Int
+    var dropPercent: Int { Int(((1 - tiredPerMinute / max(freshPerMinute, 0.1)) * 100).rounded()) }
+
+    /// The heart rate above which head movement falls to 60% or less of your fresh level.
+    static func evaluate(workouts: [SavedWorkout], profileID: UUID, now: Date = Date()) -> DefensiveRedline? {
+        let rounds = workouts
+            .filter { $0.profileID == profileID && now.timeIntervalSince($0.startDate) < 90 * 86400 }
+            .flatMap(\.roundStats)
+            .compactMap { r -> (bpm: Int, perMin: Double)? in
+                guard let m = r.headMoves, r.endElapsed - r.startElapsed >= 60 else { return nil }
+                return (r.avgBPM, Double(m) / (r.endElapsed - r.startElapsed) * 60)
+            }
+            .sorted { $0.bpm < $1.bpm }
+        guard rounds.count >= 6 else { return nil }
+        let freshCount = max(2, rounds.count / 3)
+        guard let fresh = mean(rounds.prefix(freshCount).map { $0.perMin }), fresh > 1 else { return nil }
+        // Walk up through the harder rounds in groups of 3 until movement collapses.
+        var i = freshCount
+        while i + 2 < rounds.count + 1 {
+            let group = Array(rounds[i..<min(rounds.count, i + 3)])
+            if let m = mean(group.map { $0.perMin }), m <= fresh * 0.6 {
+                return DefensiveRedline(redlineBPM: group[0].bpm, freshPerMinute: fresh, tiredPerMinute: m, rounds: rounds.count)
+            }
+            i += 1
+        }
+        return nil
+    }
+
+    var headline: String { "Above \(redlineBPM) BPM your head movement drops \(dropPercent)%" }
+}
+
+// MARK: - Sparring partners, round results and technique log
+
+enum SparringInsights {
+    static func analyze(_ workouts: [SavedWorkout], profileID: UUID) -> [DriverInsight] {
+        let mine = workouts.filter { $0.profileID == profileID }
+        var out: [DriverInsight] = []
+
+        // Heart-rate cost by partner.
+        let byPartner = Dictionary(grouping: mine.filter { ($0.partner ?? "").isEmpty == false }) { $0.partner! }
+        let costs = byPartner.compactMap { name, ws -> (String, Double, Int)? in
+            let hr = ws.flatMap(\.roundStats).map { Double($0.avgBPM) }
+            guard hr.count >= 3, let m = mean(hr) else { return nil }
+            return (name, m, ws.count)
+        }.sorted { $0.1 > $1.1 }
+        if costs.count >= 2, let hardest = costs.first, let easiest = costs.last, hardest.1 - easiest.1 >= 4 {
+            out.append(DriverInsight(icon: "person.2.fill", title: "\(hardest.0) pushes you hardest",
+                                     detail: "Your rounds with \(hardest.0) average \(Int(hardest.1)) BPM, \(Int(hardest.1 - easiest.1)) more than with \(easiest.0).",
+                                     strength: hardest.1 - easiest.1))
+        }
+
+        // Rounds you lose: is it the gas tank?
+        var won: [Double] = [], lost: [Double] = []
+        for w in mine where !w.roundResults.isEmpty {
+            for (i, r) in w.roundStats.sorted(by: { $0.roundNumber < $1.roundNumber }).enumerated() where i < w.roundResults.count {
+                if w.roundResults[i] == "W" { won.append(Double(r.avgBPM)) }
+                if w.roundResults[i] == "L" { lost.append(Double(r.avgBPM)) }
+            }
+        }
+        if won.count >= 3, lost.count >= 3, let mw = mean(won), let ml = mean(lost) {
+            if ml - mw >= 4 {
+                out.append(DriverInsight(icon: "flame.fill", title: "You lose rounds when you redline",
+                                         detail: "Rounds you lost averaged \(Int(ml)) BPM vs \(Int(mw)) in rounds you won. Conditioning will win you rounds.",
+                                         strength: ml - mw))
+            } else {
+                out.append(DriverInsight(icon: "target", title: "Lost rounds aren't about fitness",
+                                         detail: "Your heart rate is about the same in rounds you win and lose. Work on the technical gaps instead.",
+                                         strength: 2))
+            }
+        }
+        return out
+    }
+
+    static let focusOptions = ["Jab", "Cross", "Hooks", "Uppercuts", "Body shots", "Low kicks", "Body kicks",
+                               "Head kicks", "Teeps", "Knees", "Elbows", "Clinch", "Defence", "Footwork", "Counters", "Ground"]
+
+    /// The technique you've gone longest without, among those you've worked on before.
+    static func neglected(_ workouts: [SavedWorkout], profileID: UUID, now: Date = Date()) -> (tag: String, days: Int)? {
+        var last: [String: Date] = [:]
+        for w in workouts where w.profileID == profileID {
+            for t in w.focusTags where (last[t] ?? .distantPast) < w.startDate { last[t] = w.startDate }
+        }
+        guard let oldest = last.min(by: { $0.value < $1.value }) else { return nil }
+        let days = Int(now.timeIntervalSince(oldest.value) / 86400)
+        return days >= 10 ? (oldest.key, days) : nil
+    }
+}
+
+// MARK: - Sleep, daily insight, debrief
+
+enum SleepScore {
+    /// 1–5 sleep rating from hours asleep.
+    static func quality(hours: Double) -> Int {
+        switch hours {
+        case 8...: return 5
+        case 7..<8: return 4
+        case 6..<7: return 3
+        case 5..<6: return 2
+        default: return 1
+        }
+    }
+}
+
+enum DailyInsight {
+    /// One insight a day, rotating through what's available.
+    static func pick(_ candidates: [String], date: Date = Date()) -> String? {
+        guard !candidates.isEmpty else { return nil }
+        let day = Calendar.current.ordinality(of: .day, in: .era, for: date) ?? 0
+        return candidates[day % candidates.count]
+    }
+}
+
+enum SessionDebrief {
+    /// A short spoken summary for the end of a session.
+    static func text(for w: SavedWorkout, history: [SavedWorkout], profile: AthleteProfile) -> String {
+        var parts: [String] = ["Session saved. \(Int(w.duration / 60)) minutes."]
+        let rounds = w.roundStats.sorted { $0.roundNumber < $1.roundNumber }
+        if rounds.count >= 2, let hardest = rounds.max(by: { $0.avgBPM < $1.avgBPM }) {
+            parts.append("Round \(hardest.roundNumber) was your hardest, at \(hardest.avgBPM) beats.")
+        }
+        if let rec = Records.newRecords(in: w, workouts: history, profile: profile).first {
+            parts.append("New record: \(rec.title.lowercased()).")
+        } else if let best = rounds.compactMap(\.stoolDropBPM).max() {
+            let monthBest = history.filter { $0.profileID == w.profileID && $0.id != w.id && w.startDate.timeIntervalSince($0.startDate) < 30 * 86400 && w.startDate > $0.startDate }
+                .flatMap(\.roundStats).compactMap(\.stoolDropBPM).max() ?? 0
+            if best > monthBest && monthBest > 0 { parts.append("Best recovery this month: \(best) beats.") }
+        }
+        let typical = mean(history.filter { $0.profileID == w.profileID && $0.id != w.id }.suffix(20).map(\.effectiveLoad)) ?? w.effectiveLoad
+        if w.effectiveLoad > typical * 1.3 {
+            parts.append("Big session. Go easy or rest tomorrow.")
+        } else if w.effectiveLoad < typical * 0.6 {
+            parts.append("Light day. You're fresh for a hard one tomorrow.")
+        }
+        return parts.joined(separator: " ")
+    }
+}

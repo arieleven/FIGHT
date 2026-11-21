@@ -108,6 +108,21 @@ struct AudioCoachSettings: Codable, Equatable {
     }
 }
 
+/// What the fighter is training for; decides what Today leads with.
+enum FighterGoal: String, Codable, CaseIterable, Identifiable {
+    case fight = "I have a fight coming up"
+    case weight = "Make weight"
+    case fitter = "Get fitter"
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .fight: return "calendar.badge.exclamationmark"
+        case .weight: return "scalemass"
+        case .fitter: return "bolt.heart"
+        }
+    }
+}
+
 // MARK: - Fighter card bio
 
 /// The fight-record details shown on the fighter card (UFC-style athlete card).
@@ -303,6 +318,19 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var trackHeadMovement = true
     var guidedBreathing = false
     var bio = FighterBio()
+    /// Finished the first-run setup.
+    var setupDone = false
+    var goal: FighterGoal = .fitter
+    /// Rounds and minutes of the fight format the fighter trains for (Gas Tank target, default timer).
+    var formatRounds = 3
+    var formatMinutes = 3
+    /// AirPods extras.
+    var headCues = true
+    var nodToStart = true
+    /// Count bag hits with the phone microphone during bag work.
+    var countBagHits = false
+
+    var fightFormat: FightFormat { FightFormat(rounds: formatRounds, minutes: formatMinutes) }
 
     enum CodingKeys: String, CodingKey {
         case id, name, sex, age, weightKg, heightCm, targetFightWeightKg
@@ -310,6 +338,7 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         case manualZones, campPhase, audioCoach
         case fightDate, campLengthWeeks, bagPreferences, useImperial
         case campHistory, trackHeadMovement, guidedBreathing, heightImperial, bio
+        case setupDone, goal, formatRounds, formatMinutes, headCues, nodToStart, countBagHits
     }
 
     init() {}
@@ -337,6 +366,13 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         useImperial = (try? c.decodeIfPresent(Bool.self, forKey: .useImperial)) ?? false
         heightImperial = (try? c.decodeIfPresent(Bool.self, forKey: .heightImperial)) ?? useImperial
         bio = (try? c.decodeIfPresent(FighterBio.self, forKey: .bio)) ?? FighterBio()
+        setupDone = (try? c.decodeIfPresent(Bool.self, forKey: .setupDone)) ?? false
+        goal = (try? c.decodeIfPresent(FighterGoal.self, forKey: .goal)) ?? (fightDate != nil ? .fight : .fitter)
+        formatRounds = (try? c.decodeIfPresent(Int.self, forKey: .formatRounds)) ?? 3
+        formatMinutes = (try? c.decodeIfPresent(Int.self, forKey: .formatMinutes)) ?? 3
+        headCues = (try? c.decodeIfPresent(Bool.self, forKey: .headCues)) ?? true
+        nodToStart = (try? c.decodeIfPresent(Bool.self, forKey: .nodToStart)) ?? true
+        countBagHits = (try? c.decodeIfPresent(Bool.self, forKey: .countBagHits)) ?? false
         campHistory = (try? c.decodeIfPresent([CampRecord].self, forKey: .campHistory)) ?? []
         trackHeadMovement = (try? c.decodeIfPresent(Bool.self, forKey: .trackHeadMovement)) ?? true
         guidedBreathing = (try? c.decodeIfPresent(Bool.self, forKey: .guidedBreathing)) ?? false
@@ -547,9 +583,16 @@ struct RoundStat: Codable, Identifiable, Equatable {
     let strikesCued: Int
     /// Head movements detected by AirPods during the round (nil = not tracked).
     var headMoves: Int?
+    /// Seconds the chin was lifted (AirPods), nil = not tracked.
+    var chinUpSeconds: Int?
+    /// Footwork bounces counted by AirPods, nil = not tracked.
+    var bounces: Int?
+    /// Bag hits heard by the microphone, nil = not counted.
+    var impacts: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, roundNumber, startElapsed, endElapsed, avgBPM, peakBPM, stoolDropBPM, strikesCued, headMoves
+        case chinUpSeconds, bounces, impacts
     }
 
     init(id: UUID = UUID(), roundNumber: Int, startElapsed: TimeInterval, endElapsed: TimeInterval, avgBPM: Int, peakBPM: Int, stoolDropBPM: Int?, strikesCued: Int = 0, headMoves: Int? = nil) {
@@ -575,6 +618,9 @@ struct RoundStat: Codable, Identifiable, Equatable {
         stoolDropBPM = try c.decodeIfPresent(Int.self, forKey: .stoolDropBPM)
         strikesCued = try c.decodeIfPresent(Int.self, forKey: .strikesCued) ?? 0
         headMoves = try? c.decodeIfPresent(Int.self, forKey: .headMoves)
+        chinUpSeconds = try? c.decodeIfPresent(Int.self, forKey: .chinUpSeconds)
+        bounces = try? c.decodeIfPresent(Int.self, forKey: .bounces)
+        impacts = try? c.decodeIfPresent(Int.self, forKey: .impacts)
     }
 }
 
@@ -746,6 +792,16 @@ struct SavedWorkout: Codable, Identifiable {
     var comboEvents: [ComboEvent] = []
     var headMovesPerMinute: Double?
     var breathingGuided = false
+    /// Rounds were found from the heart-rate pattern (no round timer used).
+    var roundsAutoDetected = false
+    /// What the fighter worked on, e.g. ["Jab", "Defence"].
+    var focusTags: [String] = []
+    /// Sparring partner's name.
+    var partner: String?
+    /// Per-round self-scoring: "W", "E" (even) or "L".
+    var roundResults: [String] = []
+    /// Total bag hits heard by the microphone.
+    var impactsCount: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -758,6 +814,7 @@ struct SavedWorkout: Codable, Identifiable {
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
         case trainingPlanID, trainingPlanTitle, blockResults
         case comboEvents, headMovesPerMinute, breathingGuided
+        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount
     }
 
     init(
@@ -893,6 +950,11 @@ struct SavedWorkout: Codable, Identifiable {
         comboEvents = (try? c.decodeIfPresent([ComboEvent].self, forKey: .comboEvents)) ?? []
         headMovesPerMinute = try? c.decodeIfPresent(Double.self, forKey: .headMovesPerMinute)
         breathingGuided = (try? c.decodeIfPresent(Bool.self, forKey: .breathingGuided)) ?? false
+        roundsAutoDetected = (try? c.decodeIfPresent(Bool.self, forKey: .roundsAutoDetected)) ?? false
+        focusTags = (try? c.decodeIfPresent([String].self, forKey: .focusTags)) ?? []
+        partner = (try? c.decodeIfPresent(String.self, forKey: .partner)) ?? nil
+        roundResults = (try? c.decodeIfPresent([String].self, forKey: .roundResults)) ?? []
+        impactsCount = (try? c.decodeIfPresent(Int.self, forKey: .impactsCount)) ?? nil
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

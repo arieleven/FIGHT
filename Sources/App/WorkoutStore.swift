@@ -211,6 +211,24 @@ final class WorkoutStore: ObservableObject {
         writeWorkoutMetadata(w)
     }
 
+    /// Saves what a session was about: technique focus, sparring partner and round scores.
+    func updateTags(workoutID: UUID, focus: [String], partner: String?, roundResults: [String]) {
+        guard let idx = workouts.firstIndex(where: { $0.id == workoutID }) else { return }
+        var w = workouts[idx]
+        w.focusTags = focus
+        let p = partner?.trimmingCharacters(in: .whitespacesAndNewlines)
+        w.partner = (p?.isEmpty ?? true) ? nil : p
+        w.roundResults = roundResults
+        workouts[idx] = w
+        writeWorkoutMetadata(w)
+    }
+
+    /// Partners this fighter has sparred with, most recent first.
+    func recentPartners(profileID: UUID) -> [String] {
+        var seen = Set<String>()
+        return workouts.filter { $0.profileID == profileID }.compactMap(\.partner).filter { seen.insert($0).inserted }
+    }
+
     /// Zips the whole Documents folder (workouts, profiles, checks, weigh-ins, exports)
     /// into a single backup file for the share sheet.
     func exportAllDataArchive() -> URL? {

@@ -32,6 +32,8 @@ enum SampleData {
         p.restingHR = 52
         p.campPhase = .fightCamp
         p.campLengthWeeks = 8
+        p.setupDone = true
+        p.goal = .fight
         p.bio.nickname = "The Engine"
         p.bio.wins = 7
         p.bio.losses = 2
@@ -156,6 +158,14 @@ enum SampleData {
             blockResults: nil, comboEvents: combos, headMovesPerMinute: headMovesPerMinute, breathingGuided: false
         )
         var w = WorkoutFinalizer.makeWorkout(from: draft, profile: profile, ghost: nil, end: rec.start.addingTimeInterval(rec.t))
+        w.roundsAutoDetected = false
+        if category == .sparring {
+            w.partner = "Dani"
+            w.roundResults = ["W", "E", "W", "L", "L"]
+            w.focusTags = ["Defence", "Low kicks"]
+        } else if category == .heavyBag {
+            w.focusTags = ["Jab", "Body kicks"]
+        }
         w.rpe = rpe
         w.rpeRated = true
         return w

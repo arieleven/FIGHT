@@ -46,11 +46,16 @@ struct WorkoutDraft: Codable {
     var comboEvents: [ComboEvent]?
     var headMovesPerMinute: Double?
     var breathingGuided: Bool?
+    var impactsCount: Int?
 }
 
 enum WorkoutFinalizer {
     /// Turns raw session data into a fully analysed SavedWorkout.
     static func makeWorkout(from d: WorkoutDraft, profile: AthleteProfile, ghost: GhostSession?, end: Date) -> SavedWorkout {
+        let steadyKinds: [WorkoutCategory] = [.walk, .roadwork, .lthrTest]
+        let detected = d.rounds.isEmpty && !steadyKinds.contains(d.category)
+            ? AutoRounds.detect(samples: d.samples, profile: profile) : []
+        let rounds = d.rounds.isEmpty ? detected : d.rounds
         let bpms = d.samples.map(\.bpm)
         let avg = bpms.isEmpty ? 0 : bpms.reduce(0, +) / bpms.count
         let maxB = bpms.max() ?? avg
@@ -70,7 +75,7 @@ enum WorkoutFinalizer {
             adherence = Double(inBand) / Double(d.samples.count)
         }
 
-        return SavedWorkout(
+        var made = SavedWorkout(
             id: d.id,
             profileID: d.profileID,
             profileName: profile.name,
@@ -97,9 +102,9 @@ enum WorkoutFinalizer {
             ghostBaselineName: d.ghostTitle,
             ghostAvgDeltaBPM: ghostDelta,
             zoneSeconds: d.zoneSeconds,
-            roundStats: d.rounds,
+            roundStats: rounds,
             pointsOfInterest: FighterAnalytics.detectPointsOfInterest(
-                samples: d.samples, roundStats: d.rounds, autoHRREvents: d.autoHRREvents, profile: profile
+                samples: d.samples, roundStats: rounds, autoHRREvents: d.autoHRREvents, profile: profile
             ),
             samples: d.samples,
             isCompressedArchive: false,
@@ -116,6 +121,9 @@ enum WorkoutFinalizer {
             headMovesPerMinute: d.headMovesPerMinute,
             breathingGuided: d.breathingGuided ?? false
         )
+        made.roundsAutoDetected = !detected.isEmpty
+        if let hits = d.impactsCount { made.impactsCount = hits }
+        return made
     }
 }
 

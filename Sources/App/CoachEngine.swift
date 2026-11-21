@@ -16,6 +16,8 @@ struct ReadinessReading: Codable, Identifiable, Equatable {
     var source: String? = nil
     /// The fighter this check belongs to (nil on checks saved before profiles were tracked).
     var profileID: UUID? = nil
+    /// Hours asleep last night, from Apple Health.
+    var sleepHours: Double? = nil
 
     var hasSelfRatings: Bool { source == nil }
 
