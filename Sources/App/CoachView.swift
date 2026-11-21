@@ -72,7 +72,7 @@ struct CoachView: View {
     private func refresh() {
         report = CoachEngine.buildReport(
             workouts: workoutStore.workouts,
-            readings: workoutStore.readinessReadings,
+            readings: workoutStore.activeReadings,
             profile: workoutStore.activeProfile,
             resolveSamples: { workoutStore.resolvedSamples(for: $0) }
         )

@@ -236,7 +236,7 @@ struct ReadinessCheckView: View {
     @ViewBuilder
     private var resultView: some View {
         if let r = result {
-            let baseline = workoutStore.readinessReadings.filter { $0.id != r.id }.prefix(14)
+            let baseline = workoutStore.activeReadings.filter { $0.id != r.id }.prefix(14)
             let baseRHR = baseline.isEmpty ? nil : Double(baseline.map(\.restingHR).reduce(0, +)) / Double(baseline.count)
             let baseHRV = baseline.compactMap(\.hrvScore)
             let avgHRV = baseHRV.isEmpty ? nil : Double(baseHRV.reduce(0, +)) / Double(baseHRV.count)

@@ -908,7 +908,7 @@ struct LiveWorkoutView: View {
             quickChip("Coach's pick", icon: "sparkles", selected: quickStartSelection == .coach) {
                 choosingPlan = false
                 session.unqueuePlan()
-                let report = CoachEngine.buildReport(workouts: workoutStore.workouts, readings: workoutStore.readinessReadings,
+                let report = CoachEngine.buildReport(workouts: workoutStore.workouts, readings: workoutStore.activeReadings,
                                                      profile: workoutStore.activeProfile,
                                                      resolveSamples: { workoutStore.resolvedSamples(for: $0) })
                 session.apply(report.nextWorkout)

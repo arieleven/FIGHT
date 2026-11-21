@@ -21,7 +21,7 @@ struct CampView: View {
     var body: some View {
         let profile = workoutStore.activeProfile
         let plan = CampPlanner.buildPlan(profile: profile, workouts: workoutStore.workouts)
-        let weight = CampPlanner.weightStatus(weighIns: workoutStore.weighIns, readings: workoutStore.readinessReadings, profile: profile)
+        let weight = CampPlanner.weightStatus(weighIns: workoutStore.weighIns, readings: workoutStore.activeReadings, profile: profile)
 
             ScrollView {
                 VStack(spacing: 16) {
@@ -406,7 +406,7 @@ struct CampView: View {
     // MARK: Body signals
 
     private var bodySignalsCard: some View {
-        let readings = workoutStore.readinessReadings
+        let readings = workoutStore.activeReadings
             .filter { $0.date >= Date().addingTimeInterval(-28 * 86400) }
             .sorted { $0.date < $1.date }
         let hrvReadings = readings.filter { $0.hrvScore != nil }

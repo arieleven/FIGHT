@@ -3,6 +3,7 @@ import SwiftUI
 struct ProfileSettingsView: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var healthKit: HealthKitManager
+    @EnvironmentObject var navigation: AppNavigation
     @State private var showingNewProfileAlert = false
     @State private var newFighterName = ""
     @AppStorage("fight.advanced.profile") private var showAdvanced = false
@@ -27,7 +28,7 @@ struct ProfileSettingsView: View {
 
         NavigationStack {
             Form {
-                Section("Fighter") {
+                Section {
                     Picker("Fighter", selection: $workoutStore.activeProfileID) {
                         ForEach(workoutStore.profiles) { p in
                             Text(p.name).tag(p.id)
@@ -41,12 +42,25 @@ struct ProfileSettingsView: View {
                         Label("Add Another Person / Sparring Partner", systemImage: "person.badge.plus")
                     }
 
+                    Button {
+                        workoutStore.loadSampleFighter()
+                        navigation.selectedTab = .coach
+                    } label: {
+                        Label(profile.name == SampleData.profileName ? "Viewing Sample Fighter" : "Try FIGHT With Sample Data",
+                              systemImage: "sparkles")
+                    }
+                    .disabled(profile.name == SampleData.profileName)
+
                     if workoutStore.profiles.count > 1 {
                         Button(role: .destructive) {
                             workoutStore.deleteProfile(profile)
                         } label: {
-                            Label("Delete Current Profile", systemImage: "trash")
+                            Label(profile.name == SampleData.profileName ? "Remove Sample Data" : "Delete Current Profile", systemImage: "trash")
                         }
+                    }
+                } footer: {
+                    if profile.name == SampleData.profileName {
+                        Text("A sample fighter with 3 sessions, a week of morning checks and weigh-ins, and a fight in 5 weeks. Your own data is untouched. Switch back with the Fighter picker.")
                     }
                 }
 

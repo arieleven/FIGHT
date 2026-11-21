@@ -124,6 +124,25 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
+    /// Adds a sample fighter with three realistic sessions, a week of morning checks,
+    /// weigh-ins and an upcoming fight, so every coach feature has data to show.
+    func loadSampleFighter() {
+        if let existing = profiles.first(where: { $0.name == SampleData.profileName }) {
+            activeProfileID = existing.id
+            saveProfilesToDisk()
+            return
+        }
+        let sample = SampleData.make()
+        profiles.append(sample.profile)
+        activeProfileID = sample.profile.id
+        saveProfilesToDisk()
+        for w in sample.workouts { save(w) }
+        readinessReadings.append(contentsOf: sample.readings)
+        readinessReadings.sort { $0.date > $1.date }
+        saveReadiness()
+        for wi in sample.weighIns { addWeighIn(wi) }
+    }
+
     func addProfile(name: String) {
         var p = AthleteProfile()
         p.name = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Sparring Partner" : name
@@ -136,6 +155,14 @@ final class WorkoutStore: ObservableObject {
     func deleteProfile(_ profile: AthleteProfile) {
         guard profiles.count > 1 else { return }
         profiles.removeAll { $0.id == profile.id }
+        if profile.name == SampleData.profileName {
+            // Sample data is removed completely with its profile.
+            for w in workouts where w.profileID == profile.id { delete(w) }
+            readinessReadings.removeAll { $0.profileID == profile.id }
+            saveReadiness()
+            weighIns.removeAll { $0.profileID == profile.id }
+            saveWeighIns()
+        }
         if activeProfileID == profile.id, let first = profiles.first {
             activeProfileID = first.id
         }
@@ -461,7 +488,14 @@ final class WorkoutStore: ObservableObject {
         }
     }
 
+    /// Readiness checks for the active fighter (older checks without a fighter show for everyone).
+    var activeReadings: [ReadinessReading] {
+        readinessReadings.filter { $0.profileID == nil || $0.profileID == activeProfileID }
+    }
+
     func addReadiness(_ reading: ReadinessReading) {
+        var reading = reading
+        if reading.profileID == nil { reading.profileID = activeProfileID }
         readinessReadings.insert(reading, at: 0)
         readinessReadings.sort { $0.date > $1.date }
         saveReadiness()

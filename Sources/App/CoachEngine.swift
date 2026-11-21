@@ -14,6 +14,8 @@ struct ReadinessReading: Codable, Identifiable, Equatable {
     var soreness: Int       // 1 (fresh) ... 5 (very sore)
     /// nil = strap check; "health" = imported from Apple Health (no HRV or self-ratings).
     var source: String? = nil
+    /// The fighter this check belongs to (nil on checks saved before profiles were tracked).
+    var profileID: UUID? = nil
 
     var hasSelfRatings: Bool { source == nil }
 

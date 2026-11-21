@@ -84,7 +84,7 @@ struct StoryData {
             d.workoutSamples = store.resolvedSamples(for: workout)
             d.workoutRecords = Records.newRecords(in: workout, workouts: store.workouts, profile: store.profile(for: workout))
         }
-        d.report = CoachEngine.buildReport(workouts: store.workouts, readings: store.readinessReadings, profile: profile,
+        d.report = CoachEngine.buildReport(workouts: store.workouts, readings: store.activeReadings, profile: profile,
                                            resolveSamples: { store.resolvedSamples(for: $0) })
         d.gasTank = GasTank.evaluate(workouts: mine, profile: profile)?.headline
         d.benchmark = Benchmark.attempts(mine)

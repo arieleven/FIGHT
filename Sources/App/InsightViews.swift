@@ -23,7 +23,7 @@ struct CoachInsights {
         i.gasTank = GasTank.evaluate(workouts: mine, profile: profile)
         i.comboCost = ComboCost.analyze(workouts: Array(mine.prefix(40)), stance: profile.bagPreferences.stance,
                                         resolveSamples: { store.resolvedSamples(for: $0) })
-        i.drivers = PerformanceDrivers.analyze(workouts: store.workouts, readings: store.readinessReadings, profile: profile)
+        i.drivers = PerformanceDrivers.analyze(workouts: store.workouts, readings: store.activeReadings, profile: profile)
         i.sorenessPatterns = SorenessInsights.patterns(store.soreness, workouts: mine, profileID: profile.id)
         i.activeSoreness = store.activeSoreness
         i.benchmarkAttempts = Benchmark.attempts(mine)
@@ -486,7 +486,7 @@ struct RecordsView: View {
     var body: some View {
         let profile = workoutStore.activeProfile
         let records = Records.all(workouts: workoutStore.workouts, profile: profile)
-        let badges = Badges.all(workouts: workoutStore.workouts, readings: workoutStore.readinessReadings, profile: profile)
+        let badges = Badges.all(workouts: workoutStore.workouts, readings: workoutStore.activeReadings, profile: profile)
         List {
             Section("Personal Records") {
                 if records.isEmpty {

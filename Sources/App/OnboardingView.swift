@@ -195,7 +195,7 @@ struct FirstRunModifier: ViewModifier {
         let now = Date()
         let today = now.formatted(.iso8601.year().month().day())
         guard Calendar.current.component(.hour, from: now) < 12, morningOffered != today else { return }
-        let checkedToday = workoutStore.readinessReadings.contains { Calendar.current.isDateInToday($0.date) }
+        let checkedToday = workoutStore.activeReadings.contains { Calendar.current.isDateInToday($0.date) }
         morningOffered = today
         if !checkedToday { offerMorningCheck = true }
     }

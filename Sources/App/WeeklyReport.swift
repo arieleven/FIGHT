@@ -35,7 +35,7 @@ struct WeeklyReportData {
         self.end = now
         self.start = now.addingTimeInterval(-7 * 86400)
         self.coach = CoachEngine.buildReport(
-            workouts: store.workouts, readings: store.readinessReadings, profile: profile,
+            workouts: store.workouts, readings: store.activeReadings, profile: profile,
             resolveSamples: { store.resolvedSamples(for: $0) }, now: now
         )
         let weekStart = now.addingTimeInterval(-7 * 86400)
@@ -49,8 +49,8 @@ struct WeeklyReportData {
         }
         self.reviews = reviews
         self.plan = CampPlanner.buildPlan(profile: profile, workouts: store.workouts, now: now)
-        self.weight = CampPlanner.weightStatus(weighIns: store.weighIns, readings: store.readinessReadings, profile: profile, now: now)
-        self.readings = store.readinessReadings.filter { $0.date >= weekStart }.sorted { $0.date < $1.date }
+        self.weight = CampPlanner.weightStatus(weighIns: store.weighIns, readings: store.activeReadings, profile: profile, now: now)
+        self.readings = store.activeReadings.filter { $0.date >= weekStart }.sorted { $0.date < $1.date }
         self.weighIns = store.weighIns
             .filter { $0.profileID == profile.id && $0.date >= now.addingTimeInterval(-28 * 86400) }
             .sorted { $0.date < $1.date }
