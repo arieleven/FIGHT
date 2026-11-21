@@ -48,6 +48,7 @@ struct WorkoutDraft: Codable {
     var headMovesPerMinute: Double?
     var breathingGuided: Bool?
     var impactsCount: Int?
+    var jumps: [Double]?
 }
 
 enum WorkoutFinalizer {
@@ -124,6 +125,7 @@ enum WorkoutFinalizer {
         )
         made.roundsAutoDetected = !detected.isEmpty
         if let hits = d.impactsCount { made.impactsCount = hits }
+        made.jumps = d.jumps ?? []
         return made
     }
 }
@@ -204,6 +206,8 @@ final class WorkoutSession: ObservableObject {
     private var blockStartStrikes = 0
     @Published private(set) var blockExtraRounds = 0
     @Published private(set) var blockExtraSeconds = 0
+    /// Next time (block-elapsed seconds) a reaction call is spoken.
+    private var nextCallAt: TimeInterval = 2
     private var roundNumberOffset = 0
     static let transitionSeconds: TimeInterval = 15
     static let firstBlockLeadIn: TimeInterval = 8
@@ -267,6 +271,11 @@ final class WorkoutSession: ObservableObject {
     private var workEndCounts: (moves: Int, bounces: Int, chin: Double, impacts: Int)?
     // Live AirPods cues
     private var firstRoundMovesPerMinute: Double?
+    private var encourager = EncouragementCoach()
+    private var firstRoundHitsPerMinute: Double?
+    /// Recent (time, bag hit count) points for the live hit rate.
+    private var hitTrail: [HitPoint] = []
+    private struct HitPoint { let t: TimeInterval; let hits: Int }
     private var moveWindowStart: (t: TimeInterval, moves: Int)?
     private var moveCueGiven = false
     private var chinHighSince: TimeInterval?
@@ -274,6 +283,10 @@ final class WorkoutSession: ObservableObject {
     private var chinBaselineSet = false
     /// Bag hits heard by the microphone this session.
     @Published private(set) var bagHits = 0
+    /// Jump heights (cm) measured by AirPods during plyo sets.
+    @Published private(set) var jumps: [Double] = []
+    @Published private(set) var setJumps: [Double] = []
+    private var qualityStopGiven = false
     private let debriefVoice = AVSpeechSynthesizer()
     private var strapLostSince: Date?
     /// Short-lived banner, e.g. "New record: recovery −38 BPM".
@@ -563,6 +576,9 @@ final class WorkoutSession: ObservableObject {
         planTransitionRemaining = nil
         blockExtraRounds = 0
         blockExtraSeconds = 0
+        nextCallAt = 2
+        setJumps = []
+        qualityStopGiven = false
         blockStartElapsed = elapsedSeconds
         blockStartStrikes = audio.strikesCuedCount
         roundNumberOffset = completedRounds.count
@@ -628,6 +644,9 @@ final class WorkoutSession: ObservableObject {
                 recordRound(stoolDrop: nil)
             }
             appendResult(for: b, completed: !skipped, start: blockStartElapsed)
+            if let best = setJumps.max() {
+                audio.announceCoachingCue("Best jump \(jumpText(best)).", enabled: true)
+            }
             audio.flushCombos()
             if !b.kind.isRoundBased || skipped { audio.playRoundEndBell() }
         }
@@ -679,6 +698,18 @@ final class WorkoutSession: ObservableObject {
         if total > 30 && before > 10 && after <= 10 && profile.audioCoach.clapperWarnings { audio.playClapper() }
         if total >= 240 && before > total / 2 && after <= total / 2 {
             audio.announceCoachingCue("Halfway.", enabled: true)
+        }
+        // Reaction game: random calls ("Left", "Up"...) every 1.8–2.8 s.
+        if !b.calls.isEmpty, planBlockElapsed >= nextCallAt, after > 1, let call = b.calls.randomElement() {
+            audio.announceCoachingCue(call, enabled: true)
+            nextCallAt = planBlockElapsed + Double.random(in: 1.8...2.8)
+        }
+        // Rest until recovered: move on early once the heart rate is back down (at least 45 s rest).
+        if b.untilRecovered, planBlockElapsed >= 45, after > 3, currentBPM > 0,
+           currentBPM <= profile.activeZones.z1Max + 5 {
+            audio.announceCoachingCue("Recovered. Go.", enabled: true)
+            finishCurrentBlock()
+            return
         }
         if after <= 0 { finishCurrentBlock() }
     }
@@ -735,16 +766,22 @@ final class WorkoutSession: ObservableObject {
         roundStartImpacts = 0
         workEndCounts = nil
         firstRoundMovesPerMinute = nil
+        encourager = EncouragementCoach()
+        firstRoundHitsPerMinute = nil
+        hitTrail = []
         moveWindowStart = nil
         moveCueGiven = false
         chinHighSince = nil
         chinCueGiven = false
         chinBaselineSet = false
         bagHits = 0
+        jumps = []
+        setJumps = []
         strapLostSince = nil
         if profile.trackHeadMovement {
             headMotion.start()
             headMotion.trackingChin = roundTimerEnabled
+            headMotion.onJump = { [weak self] cm in self?.recordJump(cm) }
             if profile.nodToStart {
                 headMotion.onNod = { [weak self] in self?.handleNod() }
             } else {
@@ -840,6 +877,7 @@ final class WorkoutSession: ObservableObject {
         UIApplication.shared.isIdleTimerDisabled = false
         headMotion.stop()
         headMotion.onNod = nil
+        headMotion.onJump = nil
         audio.onBagHit = nil
         audio.countBagHits = false
         audio.shutdownAudio()
@@ -958,6 +996,7 @@ final class WorkoutSession: ObservableObject {
             evaluateAutomaticHRR(bpm: bpm, profile: p)
             evaluateLiveAudioCoaching(bpm: bpm, zone: z, profile: p, coachCfg: coachCfg)
             evaluatePlan(bpm: bpm, coachCfg: coachCfg)
+            evaluateEncouragement(bpm: bpm, profile: p)
             if Int(elapsedSeconds) % 10 == 0 && samples.count >= 60 {
                 liveAlpha1 = HRVMath.liveAlpha1(recentSamples: Array(samples.suffix(150)))
             }
@@ -1119,11 +1158,76 @@ final class WorkoutSession: ObservableObject {
             let secs = max(60, workEnd - currentRoundStartElapsed)
             firstRoundMovesPerMinute = Double(moves) / secs * 60
         }
+        if currentRound == 1, let hits = completedRounds.last?.impacts {
+            let secs = max(60, workEnd - currentRoundStartElapsed)
+            firstRoundHitsPerMinute = Double(hits) / secs * 60
+        }
     }
 
     // MARK: AirPods cues, nod, strap watch, debrief
 
     /// "Move your head" when head movement falls to half of round 1; "Chin down" when the chin stays up.
+    /// A jump measured by AirPods. Counts only inside plyo jump sets.
+    private func recordJump(_ cm: Double) {
+        guard isRecording, isRunningPlan, !isInPlanTransition, !planComplete,
+              let b = currentBlock, b.contacts > 0, b.kind == .timedDrill || b.kind == .intervals else { return }
+        jumps.append(cm)
+        setJumps.append(cm)
+        // Quality stop: plyos are for max effort. Two jumps in a row more than 10% under
+        // the set's best means the legs are fading, so end the set.
+        guard b.kind == .timedDrill, !qualityStopGiven, setJumps.count >= 4, let best = setJumps.max() else { return }
+        let lastTwo = setJumps.suffix(2)
+        if lastTwo.allSatisfy({ $0 < best * 0.9 }) {
+            qualityStopGiven = true
+            audio.announceCoachingCue("Jumps are getting lower. Stop the set and rest.", enabled: true)
+            finishCurrentBlock()
+        }
+    }
+
+    func jumpText(_ cm: Double) -> String {
+        profile.useImperial ? "\(Int((cm / 2.54).rounded())) inches" : "\(Int(cm.rounded())) centimetres"
+    }
+
+    /// Corner-coach mode: push when the pace drops, breathe when redlining.
+    private func evaluateEncouragement(bpm: Int, profile p: AthleteProfile) {
+        guard p.encouragement, p.audioCoach.masterEnabled else { return }
+        var isWork = false
+        var isRest = false
+        var remaining: TimeInterval?
+        var phase = phaseElapsed
+        if roundTimerEnabled {
+            isWork = !isRestPeriod
+            isRest = isRestPeriod
+            let length = Double(isRestPeriod ? restDurationSeconds : workDurationSeconds)
+            remaining = length - phaseElapsed
+        } else if isRunningPlan, !isInPlanTransition, !planComplete, let b = currentBlock {
+            phase = planBlockElapsed
+            remaining = Double(b.durationSeconds + blockExtraSeconds) - planBlockElapsed
+            isRest = b.kind == .rest || b.untilRecovered
+            isWork = !isRest && (b.kind == .timedDrill || b.kind == .intervals) && b.calls.isEmpty
+        }
+        // Your own pace: the block's target, or round 1 of this block (minus a little).
+        var floor = activeTargetRange?.lowerBound
+        if floor == nil, roundTimerEnabled, completedRounds.count > roundNumberOffset {
+            floor = completedRounds[roundNumberOffset].avgBPM - 8
+        }
+        var hitRate: Double?
+        if audio.countBagHits {
+            hitTrail.append(HitPoint(t: elapsedSeconds, hits: bagHits))
+            hitTrail.removeAll { elapsedSeconds - $0.t > 20 }
+            if isWork, let first = hitTrail.first, elapsedSeconds - first.t >= 15 {
+                hitRate = Double(bagHits - first.hits) / (elapsedSeconds - first.t) * 60
+            }
+        }
+        let input = EncouragementCoach.Input(
+            now: elapsedSeconds, bpm: bpm, isWork: isWork, isRest: isRest, phaseElapsed: phase,
+            phaseRemaining: remaining, paceFloor: floor, redLine: p.activeZones.z4Max,
+            hitRate: hitRate, hitRateRef: firstRoundHitsPerMinute)
+        if let cue = encourager.evaluate(input) {
+            audio.announceCoachingCue(cue.line, enabled: true)
+        }
+    }
+
     private func evaluateHeadCues() {
         guard roundTimerEnabled, !isRestPeriod, headMotion.isReceiving else { return }
         let p = profile
@@ -1428,7 +1532,8 @@ final class WorkoutSession: ObservableObject {
             comboEvents: comboEvents,
             headMovesPerMinute: headMovesPerMinute,
             breathingGuided: breathingUsed,
-            impactsCount: audio.countBagHits ? bagHits : nil
+            impactsCount: audio.countBagHits ? bagHits : nil,
+            jumps: jumps.isEmpty ? nil : jumps
         )
     }
 

@@ -22,6 +22,9 @@ struct ReadinessCheckView: View {
     @State private var soreRegions: Set<BodyRegion> = []
     @State private var result: ReadinessReading?
     @State private var showingDeviceSheet = false
+    @StateObject private var jumpTracker = HeadMotionTracker()
+    @State private var testJumps: [Double] = []
+    @State private var jumpTesting = false
 
     private let settleSeconds = 15
 
@@ -53,7 +56,10 @@ struct ReadinessCheckView: View {
                     .presentationDetents([.medium, .large])
             }
             .interactiveDismissDisabled(phase == .measuring)
-            .onDisappear { stopTimer() }
+            .onDisappear {
+                stopTimer()
+                stopJumpTest()
+            }
         }
     }
 
@@ -235,6 +241,8 @@ struct ReadinessCheckView: View {
                 }
             }
 
+            if jumpTracker.isAvailable { jumpTest }
+
             Button {
                 finish()
             } label: {
@@ -247,6 +255,65 @@ struct ReadinessCheckView: View {
             .controlSize(.large)
             .tint(.pink)
         }
+    }
+
+    // MARK: Jump test (AirPods)
+
+    private var jumpTest: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Jump test", systemImage: "airpodspro").font(.headline)
+                Text("optional").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let best = testJumps.max() {
+                    Text(jumpLabel(best)).font(.headline).monospacedDigit().foregroundStyle(.pink)
+                }
+            }
+            if jumpTesting {
+                Text(testJumps.count < 3 ? "Jump \(testJumps.count + 1) of 3. Hands on hips, jump as high as you can."
+                                         : "Done.")
+                    .font(.subheadline)
+                ProgressView(value: Double(testJumps.count), total: 3).tint(.pink)
+            } else {
+                Text("Wear your AirPods, hands on hips, 3 max jumps. Tired legs show up here before you feel them.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Button(testJumps.isEmpty ? "Start Jump Test" : "Redo") { startJumpTest() }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private func jumpLabel(_ cm: Double) -> String {
+        workoutStore.activeProfile.useImperial
+            ? String(format: "%.0f in", cm / 2.54) : String(format: "%.0f cm", cm)
+    }
+
+    private func startJumpTest() {
+        testJumps = []
+        jumpTesting = true
+        jumpTracker.onJump = { cm in
+            guard testJumps.count < 3 else { return }
+            testJumps.append(cm)
+            if testJumps.count >= 3 { stopJumpTest() }
+        }
+        jumpTracker.start()
+    }
+
+    private func stopJumpTest() {
+        jumpTracker.onJump = nil
+        jumpTracker.stop()
+        jumpTesting = false
+    }
+
+    /// Today's jump vs the fighter's usual (0.9 = 10% lower), nil without a baseline.
+    static func jumpRatio(_ r: ReadinessReading, history: [ReadinessReading]) -> Double? {
+        guard let j = r.jumpCm else { return nil }
+        let past = history.filter { $0.id != r.id }.compactMap(\.jumpCm).prefix(14)
+        guard past.count >= 3 else { return nil }
+        let avg = past.reduce(0, +) / Double(past.count)
+        return avg > 0 ? j / avg : nil
     }
 
     @ViewBuilder
@@ -277,6 +344,13 @@ struct ReadinessCheckView: View {
                         unit: r.rmssd.map { String(format: "RMSSD %.0f ms", $0) } ?? "signal too noisy",
                         comparison: zip2(r.hrvScore, avgHRV).map { String(format: "%+.0f vs usual", Double($0.0) - $0.1) }
                     )
+                }
+
+                if let j = r.jumpCm {
+                    let ratio = Self.jumpRatio(r, history: workoutStore.activeReadings)
+                    resultTile(title: "Jump", value: jumpLabel(j).components(separatedBy: " ")[0],
+                               unit: workoutStore.activeProfile.useImperial ? "in" : "cm",
+                               comparison: ratio.map { String(format: "%+.0f%% vs usual", ($0 - 1) * 100) })
                 }
 
                 Text(interpretation(r, baseRHR: baseRHR, avgHRV: avgHRV))
@@ -320,6 +394,13 @@ struct ReadinessCheckView: View {
         if let h = r.hrvScore, let a = avgHRV, Double(h) - a <= -6 { flags += 1 }
         if r.sleepQuality <= 2 { flags += 1 }
         if r.soreness >= 4 { flags += 1 }
+        let legsTired = (Self.jumpRatio(r, history: workoutStore.activeReadings) ?? 1) < 0.9
+        if legsTired { flags += 1 }
+        if flags == 1 && legsTired { return "Legs are tired today. Train, but skip plyos and keep the footwork light." }
+        return generalInterpretation(flags) + (legsTired ? " Your jump is down too: skip plyos today." : "")
+    }
+
+    private func generalInterpretation(_ flags: Int) -> String {
         switch flags {
         case 0: return "You look recovered. Check the Coach tab for today's session."
         case 1: return "One warning sign today. Train, but keep an eye on how you feel during warm-up."
@@ -384,6 +465,8 @@ struct ReadinessCheckView: View {
             soreness: soreness
         )
         reading.sleepHours = sleepHours
+        reading.jumpCm = testJumps.max()
+        stopJumpTest()
         workoutStore.addReadiness(reading)
         if soreness >= 3 {
             let severity = soreness >= 5 ? 3 : 2

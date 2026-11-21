@@ -11,6 +11,8 @@ final class HeadMotionTracker: ObservableObject {
     /// Seconds spent with the chin lifted above the fighter's normal guard position.
     @Published private(set) var chinUpSeconds: Double = 0
 
+    /// Called with the estimated height (cm) of each jump, from the time in the air.
+    var onJump: (@MainActor (Double) -> Void)?
     /// Called when the fighter nods (down-up), used to start the next round hands-free.
     var onNod: (@MainActor () -> Void)?
     /// Raw samples for drills: (timestamp, rotation rate x/y/z, roll, pitch).
@@ -23,6 +25,7 @@ final class HeadMotionTracker: ObservableObject {
     private var bounceArmed = true
     private var lastTimestamp: TimeInterval?
     private var nodState = NodDetector()
+    private var jumpState = JumpDetector()
 
     /// Chin baseline: the median pitch while the fighter is in their stance.
     private var pitchBaseline: Double?
@@ -104,6 +107,7 @@ final class HeadMotionTracker: ObservableObject {
         if pitchBaseline == nil, recentPitch.count == 25 { setChinBaseline() }
         if trackingChin, chinLiftNow > Self.chinLift { chinUpSeconds += dt }
 
+        if let cm = jumpState.feed(vertical: vertical, ts: ts) { onJump?(cm) }
         if nodState.feed(pitchRate: rx, otherRate: max(abs(ry), abs(rz)), ts: ts) { onNod?() }
         onSample?(ts, rx, ry, rz, roll, pitch)
     }
@@ -146,5 +150,30 @@ struct NodDetector {
             firstTime = ts
         }
         return false
+    }
+}
+
+/// Jump height from flight time. In the air the head is in free fall (about -1 g of user
+/// acceleration along gravity); height = g·t²/8. Flights under 0.2 s (rope skips, bounces) are ignored.
+struct JumpDetector {
+    static let fallThreshold = -0.6
+    static let landThreshold = -0.3
+    private var fallStart: TimeInterval?
+
+    static func heightCm(flight t: Double) -> Double { 9.81 * t * t / 8 * 100 }
+
+    mutating func feed(vertical: Double, ts: TimeInterval) -> Double? {
+        if let start = fallStart {
+            if vertical > Self.landThreshold {
+                fallStart = nil
+                let t = ts - start
+                guard t >= 0.2, t <= 1.0 else { return nil }
+                return Self.heightCm(flight: t)
+            }
+            if ts - start > 1.2 { fallStart = nil }
+        } else if vertical < Self.fallThreshold {
+            fallStart = ts
+        }
+        return nil
     }
 }

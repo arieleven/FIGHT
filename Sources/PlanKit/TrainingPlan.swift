@@ -76,6 +76,12 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
     var reps = 10
     var cue = ""
     var videoURL: String?
+    /// Words the coach calls at random during the block (reaction games), e.g. ["Left", "Right", "Up"].
+    var calls: [String] = []
+    /// Rest that ends early once heart rate has recovered (at least 45 s).
+    var untilRecovered = false
+    /// Estimated foot contacts (plyometric volume).
+    var contacts = 0
 
     init(kind: PlanBlockKind, title: String? = nil) {
         self.kind = kind
@@ -128,6 +134,7 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
 
     enum CodingKeys: String, CodingKey {
         case id, kind, title, rounds, workSeconds, restSeconds, durationSeconds, combos, tempo, target, sets, reps, cue, videoURL
+        case calls, untilRecovered, contacts
     }
 
     init(from decoder: Decoder) throws {
@@ -148,6 +155,9 @@ struct PlanBlock: Codable, Identifiable, Equatable, Hashable {
         reps = (try? c.decodeIfPresent(Int.self, forKey: .reps)) ?? d.reps
         cue = (try? c.decodeIfPresent(String.self, forKey: .cue)) ?? ""
         videoURL = try? c.decodeIfPresent(String.self, forKey: .videoURL)
+        calls = (try? c.decodeIfPresent([String].self, forKey: .calls)) ?? []
+        untilRecovered = (try? c.decodeIfPresent(Bool.self, forKey: .untilRecovered)) ?? false
+        contacts = (try? c.decodeIfPresent(Int.self, forKey: .contacts)) ?? 0
     }
 }
 

@@ -48,11 +48,12 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 ### 👊 Simple by design
 - **Four tabs**: Today, Progress (with your fight camp inside it), History, You
 - **Today answers the daily question**: train hard, go easy or rest, with the session ready to go, one insight and your goal (fight countdown, weight to go or fitness)
-- **One-minute setup**: name and body, discipline and fight format, your goal, then strap and AirPods
+- **One-minute setup**: name and body, what you train (pick several, the first is your main sport) and the gear you own, fight format, your goal, then strap and AirPods
+- **Only what you train**: workout types and bag combos follow your disciplines (no kicks for boxers, no grappling for strikers). Change it any time in You → My Training
 - **Rounds found automatically** from your heart rate when you don't use the timer, and a short spoken debrief when you finish
 - **Gloves-on control**: End Round and Start Next Round on the lock screen, or nod on the stool to start the next round
 - **Starts the way you left it**: your last setup is remembered for each workout type, and the Start button says exactly what it will do
-- **Quick start**: Last workout, Coach's pick or a Plan, in one tap
+- **Quick start**: Last, Plyo, Mix or Plans, in one tap (Coach's pick sits on the Today card)
 - **Coach answers first**: "Today: train hard / go easy / rest", then one button to load that session
 - **Units your way**: tap or swipe the unit next to any height or weight to switch cm ⇄ ft/in and kg ⇄ lb
 - **Try it with sample data**: You → Try FIGHT With Sample Data adds a sample fighter with three realistic sessions, a week of morning checks and an upcoming fight
@@ -74,6 +75,21 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Live aerobic-threshold indicator** (DFA α1 from beat-to-beat data)
 - **Lock Screen and Dynamic Island** Live Activity with BPM, zone and round countdown
 - **30-minute LTHR field test** that sets your lactate-threshold zones automatically
+- **Corner coach** (on by default): pushes you when your heart rate or bag output drops below your own round-1 pace, tells you to breathe when you've been redlining for a minute or are still high early in the rest. At most one call every 45 seconds
+
+### 🦘 Plyometrics and Mix
+- **Four fighter plyo sessions**:
+  | Session | What it builds |
+  |---|---|
+  | **Fight Power** | Leg drive for kicks and entries: box or squat jumps, broad jumps, skater bounds, split-jump switches |
+  | **Punch Power** | Upper body and rotation: med-ball passes, rotational throws and slams (or explosive push-ups and band punches), all-out punching |
+  | **Fast Feet** | Pogo, in-out and lateral hops, then a reaction game where the coach calls "Left! Up! Back!" at random |
+  | **Plyo Rounds** | 20/10 bursts in your fight format, alternating jumping and ground rounds. The hard one |
+- **Gear checklist before you start**: your gear is pre-ticked; untick what you didn't bring and the session swaps exercises (no box → squat jumps, no med ball → explosive push-ups)
+- **Safe volume**: every session stays under a foot-contact cap for your level (100 / 120 / 140 landings), and rests end early once your heart rate has recovered
+- **Jump height with AirPods**: each jump's height from time in the air, spoken best per set, and a quality stop when jumps drop more than 10%. The morning check has an optional 3-jump test: when it's 10% under your usual, the coach says your legs are tired and holds off on plyos
+- **Coach's pick schedules plyos**: one or two a week, 48 h apart, not after hard sparring, once a week in the taper and none in fight week
+- **Mix**: build one session from blocks (rope, bag, shadow, pads, any plyo, run, strength, cool-down) or start from Camp Classic, Power Day or Engine Day. Run it or save it as a plan
 
 ### 🧠 Coach: ratings, readiness and what to do next
 - **Readiness (0–100)**: combines training form, HRV and resting HR versus your baseline, sleep, soreness, and time since your last hard session
@@ -241,7 +257,10 @@ FIGHT/
     │   ├── CoachEngine.swift           # Ratings, load model, prescriptions, workout reviews
     │   ├── Insights.swift              # Gas tank, combo cost, benchmark, drivers, records, soreness, camp compare
     │   ├── InsightViews.swift          # Cards and sheets for the signature insights
-    │   ├── HeadMotionTracker.swift     # AirPods head-movement counting
+    │   ├── HeadMotionTracker.swift     # AirPods head movement, chin, bounce, nods, jump height
+    │   ├── Plyo.swift                  # Plyo sessions, Mix builder, plyo scheduling
+    │   ├── TrainingViews.swift         # Plyo and Mix sheets, disciplines and gear choices
+    │   ├── Encouragement.swift         # Corner-coach push / breathe logic
     │   ├── FightIntents.swift          # Siri and Shortcuts
     │   ├── HRVMath.swift               # RR artifact correction, RMSSD, DFA α1, VT1 estimate
     │   ├── CoachView.swift             # Coach tab

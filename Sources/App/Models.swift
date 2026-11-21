@@ -108,6 +108,62 @@ struct AudioCoachSettings: Codable, Equatable {
     }
 }
 
+enum Equipment: String, Codable, CaseIterable, Identifiable {
+    case jumpRope = "Jump rope"
+    case heavyBag = "Heavy bag"
+    case medBall = "Medicine ball"
+    case plyoBox = "Plyo box"
+    case band = "Resistance band"
+    var id: String { rawValue }
+    var icon: String {
+        switch self {
+        case .jumpRope: return "figure.jumprope"
+        case .heavyBag: return "figure.boxing"
+        case .medBall: return "circle.fill"
+        case .plyoBox: return "square.stack.3d.up.fill"
+        case .band: return "line.3.horizontal"
+        }
+    }
+}
+
+/// Plyometric experience: sets the foot-contact budget per session.
+enum PlyoLevel: String, Codable, CaseIterable, Identifiable {
+    case beginner = "New to it", intermediate = "Some experience", advanced = "Experienced"
+    var id: String { rawValue }
+    /// Upper end of the common per-session foot-contact ranges (80–100, 100–120, 120–140).
+    var maxContacts: Int {
+        switch self {
+        case .beginner: return 100
+        case .intermediate: return 120
+        case .advanced: return 140
+        }
+    }
+}
+
+/// Which workout types and bag strikes a set of disciplines needs.
+enum DisciplineRules {
+    static let all = ["Muay Thai", "Kickboxing", "K-1", "Boxing", "MMA", "BJJ", "Wrestling"]
+
+    static func categories(for disciplines: [String]) -> [WorkoutCategory] {
+        var c: [WorkoutCategory] = []
+        let d = Set(disciplines)
+        if d.contains("Muay Thai") { c.append(.muayThai) }
+        if !d.isDisjoint(with: ["Kickboxing", "K-1", "MMA"]) { c.append(.kickboxing) }
+        c += [.heavyBag, .padWork, .sparring]
+        if !d.isDisjoint(with: ["BJJ", "Wrestling", "MMA"]) { c.append(.bjj) }
+        c += [.roadwork, .conditioning, .walk, .lthrTest]
+        return c
+    }
+
+    /// Bag-coach strike sets that fit the disciplines.
+    static func strikes(for disciplines: [String]) -> (kicks: Bool, kneesElbows: Bool) {
+        let d = Set(disciplines)
+        let kicks = !d.isDisjoint(with: ["Muay Thai", "Kickboxing", "K-1", "MMA"])
+        let knees = !d.isDisjoint(with: ["Muay Thai", "K-1", "MMA"])
+        return (kicks, knees)
+    }
+}
+
 /// What the fighter is training for; decides what Today leads with.
 enum FighterGoal: String, Codable, CaseIterable, Identifiable {
     case fight = "I have a fight coming up"
@@ -329,6 +385,25 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
     var nodToStart = true
     /// Count bag hits with the phone microphone during bag work.
     var countBagHits = false
+    /// What the fighter trains; the first is the main discipline. Hides irrelevant options.
+    var disciplines: [String] = []
+    /// Gear the fighter owns (checked again before each plyo session).
+    var equipment: [Equipment] = [.jumpRope, .heavyBag]
+    var plyoLevel: PlyoLevel = .intermediate
+    /// The coach pushes you when you slow down and calms you when you redline.
+    var encouragement = true
+
+    /// Disciplines to use: the chosen list, or the card's discipline.
+    var trainedDisciplines: [String] { disciplines.isEmpty ? [bio.discipline] : disciplines }
+
+    /// Sets what the fighter trains (first = main) and fits the bag-coach strikes to it.
+    mutating func setDisciplines(_ list: [String]) {
+        disciplines = list.isEmpty ? [bio.discipline] : list
+        bio.discipline = disciplines[0]
+        let strikes = DisciplineRules.strikes(for: disciplines)
+        bagPreferences.includeKicks = strikes.kicks
+        bagPreferences.includeKneesElbows = strikes.kneesElbows
+    }
 
     var fightFormat: FightFormat { FightFormat(rounds: formatRounds, minutes: formatMinutes) }
 
@@ -339,6 +414,7 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         case fightDate, campLengthWeeks, bagPreferences, useImperial
         case campHistory, trackHeadMovement, guidedBreathing, heightImperial, bio
         case setupDone, goal, formatRounds, formatMinutes, headCues, nodToStart, countBagHits
+        case disciplines, equipment, plyoLevel, encouragement
     }
 
     init() {}
@@ -373,6 +449,10 @@ struct AthleteProfile: Codable, Identifiable, Equatable {
         headCues = (try? c.decodeIfPresent(Bool.self, forKey: .headCues)) ?? true
         nodToStart = (try? c.decodeIfPresent(Bool.self, forKey: .nodToStart)) ?? true
         countBagHits = (try? c.decodeIfPresent(Bool.self, forKey: .countBagHits)) ?? false
+        disciplines = (try? c.decodeIfPresent([String].self, forKey: .disciplines)) ?? []
+        equipment = (try? c.decodeIfPresent([Equipment].self, forKey: .equipment)) ?? [.jumpRope, .heavyBag]
+        plyoLevel = (try? c.decodeIfPresent(PlyoLevel.self, forKey: .plyoLevel)) ?? .intermediate
+        encouragement = (try? c.decodeIfPresent(Bool.self, forKey: .encouragement)) ?? true
         campHistory = (try? c.decodeIfPresent([CampRecord].self, forKey: .campHistory)) ?? []
         trackHeadMovement = (try? c.decodeIfPresent(Bool.self, forKey: .trackHeadMovement)) ?? true
         guidedBreathing = (try? c.decodeIfPresent(Bool.self, forKey: .guidedBreathing)) ?? false
@@ -808,6 +888,8 @@ struct SavedWorkout: Codable, Identifiable {
     var impactsCount: Int?
     /// Set when moved to Recently Deleted (kept 30 days).
     var deletedAt: Date?
+    /// Jump heights measured by AirPods (cm).
+    var jumps: [Double] = []
 
     enum CodingKeys: String, CodingKey {
         case id, profileID, profileName, category, drillTag, rpe, notes
@@ -820,7 +902,7 @@ struct SavedWorkout: Codable, Identifiable {
         case rpeRated, planTitle, planTargetLow, planTargetHigh, planAdherence
         case trainingPlanID, trainingPlanTitle, blockResults
         case comboEvents, headMovesPerMinute, breathingGuided
-        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt
+        case roundsAutoDetected, focusTags, partner, roundResults, impactsCount, deletedAt, jumps
     }
 
     init(
@@ -962,6 +1044,7 @@ struct SavedWorkout: Codable, Identifiable {
         roundResults = (try? c.decodeIfPresent([String].self, forKey: .roundResults)) ?? []
         impactsCount = (try? c.decodeIfPresent(Int.self, forKey: .impactsCount)) ?? nil
         deletedAt = (try? c.decodeIfPresent(Date.self, forKey: .deletedAt)) ?? nil
+        jumps = (try? c.decodeIfPresent([Double].self, forKey: .jumps)) ?? []
     }
 
     /// Session-RPE (Foster) converted to TRIMP-equivalent units.

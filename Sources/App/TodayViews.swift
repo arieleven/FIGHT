@@ -4,6 +4,7 @@ import SwiftUI
 struct TodayCard: View {
     @EnvironmentObject var workoutStore: WorkoutStore
     @EnvironmentObject var session: WorkoutSession
+    @EnvironmentObject var navigation: AppNavigation
 
     @State private var report: CoachReport?
     @State private var insight: String?
@@ -74,7 +75,9 @@ struct TodayCard: View {
                 }
                 Spacer()
                 if !p.isRestDay {
-                    Button("Use") { session.apply(p) }
+                    Button("Use") {
+                        if p.plyo != nil { navigation.load(p) } else { session.apply(p) }
+                    }
                         .buttonStyle(.borderedProminent)
                         .tint(v.color)
                         .disabled(session.activePlan?.title == p.title)

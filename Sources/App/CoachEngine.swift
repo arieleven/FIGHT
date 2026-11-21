@@ -18,6 +18,8 @@ struct ReadinessReading: Codable, Identifiable, Equatable {
     var profileID: UUID? = nil
     /// Hours asleep last night, from Apple Health.
     var sleepHours: Double? = nil
+    /// Best of the morning jump test (cm, AirPods).
+    var jumpCm: Double? = nil
 
     var hasSelfRatings: Bool { source == nil }
 
@@ -91,6 +93,8 @@ struct WorkoutPrescription: Identifiable, Equatable {
     let structure: String
     let rationale: String
     let isRestDay: Bool
+    /// Set when the pick is a plyometrics session (runs as a plan).
+    var plyo: PlyoVariant? = nil
 }
 
 struct CoachRecommendation: Identifiable {
@@ -316,7 +320,7 @@ enum CoachEngine {
 
         let next = prescribeNext(
             readiness: readiness, focus: Array(focus), workouts: workouts, load: load,
-            profile: profile, vt1: vt1, now: now
+            profile: profile, vt1: vt1, now: now, readings: readings
         )
         let recs = buildRecommendations(
             readiness: readiness, metrics: metrics, focus: Array(focus), load: load, workouts: workouts,
@@ -625,7 +629,7 @@ enum CoachEngine {
 
     static func prescribeNext(readiness: MetricScore, focus: [MetricScore], workouts: [SavedWorkout],
                               load: [TrainingLoadPoint], profile: AthleteProfile,
-                              vt1: HRVMath.VT1Estimate?, now: Date) -> WorkoutPrescription {
+                              vt1: HRVMath.VT1Estimate?, now: Date, readings: [ReadinessReading] = []) -> WorkoutPrescription {
         let z = profile.activeZones
         let r = readiness.score ?? 60
         let form = load.last?.form ?? 0
@@ -660,6 +664,19 @@ enum CoachEngine {
                 structure: "5 × 3 min shadow / technique at 60–70% effort, 1 min rest",
                 rationale: "\(why) Sharpen technique at controlled intensity, staying under \(z.z3Max) BPM.",
                 isRestDay: false
+            )
+        }
+
+        if r >= 60, let v = PlyoScheduler.suggest(workouts: workouts, readings: readings, profile: profile, now: now) {
+            let mins = PlyoLibrary.plan(v, gear: Set(profile.equipment), level: profile.plyoLevel,
+                                        format: profile.fightFormat).plannedSeconds / 60
+            return WorkoutPrescription(
+                title: v.rawValue, category: .conditioning, drillTag: .intervals, roundTimer: false,
+                workSeconds: 0, restSeconds: 0, rounds: nil, durationMinutes: mins, useBagCoach: false, bagTempo: .burnout,
+                targetLowBPM: z.z2Max, targetHighBPM: profile.effectiveMaxHR,
+                structure: v.blurb,
+                rationale: "Your legs are fresh and you haven't jumped in 2+ days. Explosive work makes your kicks, entries and footwork faster. Do it first, fresh, and stop when the jumps get lower.",
+                isRestDay: false, plyo: v
             )
         }
 

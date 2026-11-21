@@ -718,6 +718,7 @@ struct FightSetupSheet: View {
                     }
                 }
             }
+            .keyboardDoneButton()
             .navigationTitle("Fight Setup")
             .navigationBarTitleDisplayMode(.inline)
             .interactiveDismissDisabled(fightSetupChanged)
@@ -827,6 +828,7 @@ struct WeighInSheet: View {
                     TextField("e.g. after sauna, high-carb day", text: $notes)
                 }
             }
+            .keyboardDoneButton()
             .navigationTitle("Log Weigh-In")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

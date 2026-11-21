@@ -14,9 +14,9 @@ struct OnboardingView: View {
     @State private var fightDate = Date().addingTimeInterval(56 * 86400)
     @State private var showingScanner = false
     @StateObject private var airPods = HeadMotionTracker()
+    @FocusState private var typing: Bool
 
     private let pages = 5
-    private static let disciplines = ["Muay Thai", "Kickboxing", "MMA", "Boxing", "K-1", "BJJ"]
     private static let formats = [FightFormat(rounds: 3, minutes: 2), FightFormat(rounds: 3, minutes: 3), FightFormat(rounds: 5, minutes: 3)]
 
     var body: some View {
@@ -48,9 +48,9 @@ struct OnboardingView: View {
                         .controlSize(.large)
                 }
                 Button {
-                    advance()
+                    if typing { typing = false } else { advance() }
                 } label: {
-                    Text(page == pages - 1 ? "Start Training" : "Continue")
+                    Text(typing ? "Done" : (page == pages - 1 ? "Start Training" : "Continue"))
                         .font(.headline)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
@@ -72,10 +72,12 @@ struct OnboardingView: View {
             if let d = draft.fightDate, d > Date() { fightDate = d }
         }
         .onChange(of: page) { _, p in
+            typing = false
             if p == 3 { airPods.start() } else { airPods.stop() }
         }
         .onDisappear { airPods.stop() }
         .interactiveDismissDisabled()
+        .scrollDismissesKeyboard(.interactively)
     }
 
     // MARK: Pages
@@ -102,6 +104,8 @@ struct OnboardingView: View {
                 field {
                     TextField("Your name", text: $draft.name)
                         .textContentType(.givenName)
+                        .focused($typing)
+                        .submitLabel(.done)
                         .font(.title3)
                 }
                 field {
@@ -113,6 +117,7 @@ struct OnboardingView: View {
                         Spacer()
                         TextField("Weight", text: $weightText)
                             .keyboardType(.decimalPad)
+                            .focused($typing)
                             .multilineTextAlignment(.trailing)
                             .frame(maxWidth: 90)
                         WeightUnitChip(text: $weightText)
@@ -136,12 +141,10 @@ struct OnboardingView: View {
     private var discipline: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                header("What do you fight?", "This sets your weight classes, round length and combos.")
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                    ForEach(Self.disciplines, id: \.self) { d in
-                        bigChoice(d, selected: draft.bio.discipline == d) { draft.bio.discipline = d }
-                    }
-                }
+                header("What do you train?", "Pick all that apply. Your first pick is your main sport: it sets weight classes and combos.")
+                TrainingChoices(disciplines: Binding(get: { draft.trainedDisciplines },
+                                                     set: { draft.setDisciplines($0) }),
+                                equipment: $draft.equipment)
                 Text("Your fight format").font(.headline).padding(.top, 6)
                 HStack(spacing: 10) {
                     ForEach(Self.formats) { f in
@@ -187,6 +190,7 @@ struct OnboardingView: View {
                             Spacer()
                             TextField("Target", text: $targetText)
                                 .keyboardType(.decimalPad)
+                                .focused($typing)
                                 .multilineTextAlignment(.trailing)
                                 .frame(maxWidth: 90)
                             Text(WeightUnits.unit(workoutStore.activeProfile.useImperial)).foregroundStyle(.secondary)
@@ -290,7 +294,8 @@ struct OnboardingView: View {
             let kg = WeightUnits.toKg(t, p.useImperial)
             if (35...200).contains(kg) { p.targetFightWeightKg = kg }
         }
-        p.bio.discipline = draft.bio.discipline
+        p.setDisciplines(draft.trainedDisciplines)
+        p.equipment = draft.equipment
         p.formatRounds = draft.formatRounds
         p.formatMinutes = draft.formatMinutes
         p.goal = draft.goal

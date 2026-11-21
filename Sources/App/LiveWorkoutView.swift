@@ -16,6 +16,8 @@ struct LiveWorkoutView: View {
     @State private var showingBagSettings = false
     @State private var choosingPlan = false
     @State private var showingSetup = false
+    @State private var plyoSheet: PlyoChoice?
+    @State private var showingMix = false
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -144,6 +146,17 @@ struct LiveWorkoutView: View {
             .sheet(isPresented: $showingSetup) {
                 setupSheet
             }
+            .sheet(item: $plyoSheet) { choice in
+                PlyoPickerSheet(initial: choice.variant)
+            }
+            .sheet(isPresented: $showingMix) {
+                MixBuilderSheet()
+            }
+            .onChange(of: navigation.plyoToPick) { _, v in
+                guard let v else { return }
+                navigation.plyoToPick = nil
+                plyoSheet = PlyoChoice(variant: v)
+            }
             .confirmationDialog(session.bagSessionComplete ? "Bag session complete" : "Finish workout?",
                                 isPresented: $showingFinishConfirm, titleVisibility: .visible) {
                 Button("Save Workout") { session.finishAndSave() }
@@ -172,6 +185,10 @@ struct LiveWorkoutView: View {
                 session.syncFromProfile()
                 applyPending()
                 applyPlanToRun()
+                if let v = navigation.plyoToPick {
+                    navigation.plyoToPick = nil
+                    plyoSheet = PlyoChoice(variant: v)
+                }
             }
             .onChange(of: navigation.pendingPrescription) { _, _ in applyPending() }
             .onChange(of: navigation.planToRun) { _, _ in applyPlanToRun() }
@@ -438,6 +455,13 @@ struct LiveWorkoutView: View {
         })
     }
 
+    /// Only the workout types that fit what this fighter trains.
+    private var workoutTypes: [WorkoutCategory] {
+        var list = DisciplineRules.categories(for: workoutStore.activeProfile.trainedDisciplines)
+        if !list.contains(session.selectedCategory) { list.insert(session.selectedCategory, at: 0) }
+        return list
+    }
+
     private var workoutSetupCard: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -445,7 +469,7 @@ struct LiveWorkoutView: View {
                     .font(.headline)
                 Spacer()
                 Picker("Workout type", selection: $session.selectedCategory) {
-                    ForEach(WorkoutCategory.allCases) { cat in
+                    ForEach(workoutTypes) { cat in
                         Label(cat.rawValue, systemImage: cat.icon).tag(cat)
                     }
                 }
@@ -903,32 +927,36 @@ struct LiveWorkoutView: View {
 
     // MARK: Quick start
 
-    private enum QuickStart { case last, coach, plan }
+    private enum QuickStart { case last, coach, plyo, mix, plan }
 
     private var quickStartSelection: QuickStart {
-        if session.queuedPlan != nil || choosingPlan { return .plan }
+        if let q = session.queuedPlan {
+            if PlyoVariant.allCases.contains(where: { $0.planID == q.id }) { return .plyo }
+            if q.title == "Mix" { return .mix }
+            return .plan
+        }
+        if choosingPlan { return .plan }
         if session.activePlan != nil { return .coach }
         return .last
     }
 
+    /// Last workout · Plyo · Mix · Plans. (Coach's pick lives on the Today card.)
     private var quickStartRow: some View {
         HStack(spacing: 8) {
-            quickChip("Last workout", icon: "arrow.counterclockwise", selected: quickStartSelection == .last) {
+            quickChip("Last", icon: "arrow.counterclockwise", selected: quickStartSelection == .last) {
                 choosingPlan = false
                 session.unqueuePlan()
                 session.activePlan = nil
                 session.restoreLastSetup()
             }
-            quickChip("Coach's pick", icon: "sparkles", selected: quickStartSelection == .coach) {
-                choosingPlan = false
-                session.unqueuePlan()
-                let report = CoachEngine.buildReport(workouts: workoutStore.workouts, readings: workoutStore.activeReadings,
-                                                     profile: workoutStore.activeProfile,
-                                                     resolveSamples: { workoutStore.resolvedSamples(for: $0) })
-                session.apply(report.nextWorkout)
+            quickChip("Plyo", icon: "figure.jumprope", selected: quickStartSelection == .plyo) {
+                plyoSheet = PlyoChoice(variant: .power)
             }
-            if !workoutStore.plans.isEmpty || session.queuedPlan != nil {
-                quickChip("Plan", icon: "list.bullet.rectangle", selected: quickStartSelection == .plan) {
+            quickChip("Mix", icon: "square.stack.3d.up.fill", selected: quickStartSelection == .mix) {
+                showingMix = true
+            }
+            if !workoutStore.plans.isEmpty || quickStartSelection == .plan {
+                quickChip("Plans", icon: "list.bullet.rectangle", selected: quickStartSelection == .plan) {
                     choosingPlan = true
                     session.activePlan = nil
                     showingSetup = true
@@ -1017,15 +1045,9 @@ struct LiveWorkoutView: View {
                 Button {
                     session.startWorkout()
                 } label: {
-                    VStack(spacing: 2) {
-                        Label(session.queuedPlan != nil ? "Start Plan" : (session.selectedCategory == .lthrTest ? "Start 30-Min LTHR Test" : "Start"), systemImage: "play.fill")
-                            .font(.title3.weight(.bold))
-                        Text(session.setupSummary)
-                            .font(.caption.weight(.semibold))
-                            .opacity(0.85)
-                            .lineLimit(1)
-                    }
-                    .frame(maxWidth: .infinity)
+                    Label(session.selectedCategory == .lthrTest && session.queuedPlan == nil ? "Start 30-Min LTHR Test" : "Start", systemImage: "play.fill")
+                        .font(.title3.weight(.bold))
+                        .frame(maxWidth: .infinity)
                     .padding(.vertical, 12)
                 }
                 .buttonStyle(.borderedProminent)
@@ -1200,6 +1222,7 @@ struct FlowLayout: Layout {
 struct PlanRunnerCard: View {
     @EnvironmentObject var session: WorkoutSession
     @EnvironmentObject var bleManager: BLEHeartRateManager
+    @EnvironmentObject var workoutStore: WorkoutStore
 
     var body: some View {
         if let plan = session.runningPlan {
@@ -1268,6 +1291,11 @@ struct PlanRunnerCard: View {
                         if let range = session.activeTargetRange {
                             targetChip(range)
                         }
+                        if let last = session.setJumps.last, let best = session.setJumps.max() {
+                            Label("Jump \(jumpShort(last)) · best \(jumpShort(best))", systemImage: "arrow.up.to.line")
+                                .font(.headline.monospacedDigit())
+                                .foregroundStyle(last < best * 0.9 ? Color.orange : Color.green)
+                        }
                     }
 
                     if !b.cue.isEmpty {
@@ -1335,8 +1363,18 @@ struct PlanRunnerCard: View {
             .foregroundStyle(color)
     }
 
+    private func jumpShort(_ cm: Double) -> String {
+        workoutStore.activeProfile.useImperial ? String(format: "%.0f in", cm / 2.54) : String(format: "%.0f cm", cm)
+    }
+
     private func clock(_ t: TimeInterval) -> String {
         let s = max(0, Int(t.rounded(.up)))
         return String(format: "%d:%02d", s / 60, s % 60)
     }
+}
+
+/// Which plyo session the picker opens on.
+struct PlyoChoice: Identifiable {
+    let variant: PlyoVariant
+    var id: String { variant.rawValue }
 }

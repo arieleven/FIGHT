@@ -9,6 +9,8 @@ final class AppNavigation: ObservableObject {
 
     /// The app's navigation, for Siri and Shortcuts.
     static weak var shared: AppNavigation?
+    /// A plyo session the coach picked; the Today tab opens the plyo sheet with it.
+    @Published var plyoToPick: PlyoVariant?
 
     @Published var selectedTab: Tab = .live
     /// Set by the "Readiness check" shortcut; the Coach tab opens the check.
@@ -53,6 +55,12 @@ final class AppNavigation: ObservableObject {
     }
 
     func load(_ prescription: WorkoutPrescription) {
+        if let v = prescription.plyo {
+            // Plyos open the picker first so the fighter can tick off the gear they brought.
+            plyoToPick = v
+            selectedTab = .live
+            return
+        }
         pendingPrescription = prescription
         selectedTab = .live
     }

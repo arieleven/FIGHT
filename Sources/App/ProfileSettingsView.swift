@@ -100,6 +100,24 @@ struct ProfileSettingsView: View {
                     }
                 }
 
+                Section {
+                    NavigationLink {
+                        TrainingSettingsView()
+                    } label: {
+                        LabeledContent {
+                            Text(profile.trainedDisciplines.joined(separator: ", "))
+                                .lineLimit(1)
+                        } label: {
+                            Label("My Training", systemImage: "figure.martial.arts")
+                        }
+                    }
+                    Toggle(isOn: binding(for: \.encouragement)) {
+                        Label("Corner coach", systemImage: "megaphone.fill")
+                    }
+                } footer: {
+                    Text("Corner coach pushes you when your pace drops and tells you to breathe when you're redlining.")
+                }
+
                 Section("Your Body") {
                     HStack {
                         Text("Name")
