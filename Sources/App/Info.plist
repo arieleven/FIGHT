@@ -103,6 +103,8 @@
 	</array>
 	<key>FacebookAppID</key>
 	<string>1320411766881372</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>FIGHT can listen for bag hits during bag work to count the strikes you land. Audio is never recorded or saved.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>FIGHT uses your AirPods' motion sensors to count head movement (slips and rolls) during rounds.</string>
 	<key>NSCameraUsageDescription</key>

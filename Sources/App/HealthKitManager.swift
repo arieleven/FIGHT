@@ -24,7 +24,7 @@ final class HealthKitManager: ObservableObject {
     var isAvailable: Bool { HKHealthStore.isHealthDataAvailable() }
 
     private var readTypes: Set<HKObjectType> {
-        [HKQuantityType(.restingHeartRate), HKQuantityType(.bodyMass)]
+        [HKQuantityType(.restingHeartRate), HKQuantityType(.bodyMass), HKCategoryType(.sleepAnalysis)]
     }
 
     // MARK: Reading from Health
@@ -62,6 +62,45 @@ final class HealthKitManager: ObservableObject {
         }
         statusMessage = added == 0 ? "No new weigh-ins in Apple Health" : "Imported \(added) weigh-in\(added == 1 ? "" : "s") from Apple Health"
         return added
+    }
+
+    /// Hours asleep last night (from 6 pm yesterday), from Apple Watch or any sleep app. nil if nothing recorded.
+    func lastNightSleepHours() async -> Double? {
+        guard isAvailable else { return nil }
+        let cal = Calendar.current
+        let start = cal.date(bySettingHour: 18, minute: 0, second: 0, of: Date().addingTimeInterval(-86400)) ?? Date().addingTimeInterval(-86400)
+        do {
+            try await store.requestAuthorization(toShare: [], read: readTypes)
+            let descriptor = HKSampleQueryDescriptor(
+                predicates: [.categorySample(type: HKCategoryType(.sleepAnalysis),
+                                             predicate: HKQuery.predicateForSamples(withStart: start, end: Date()))],
+                sortDescriptors: [SortDescriptor(\.startDate)],
+                limit: 500
+            )
+            let samples = try await descriptor.result(for: store)
+            let asleep: Set<Int> = [HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue,
+                                    HKCategoryValueSleepAnalysis.asleepCore.rawValue,
+                                    HKCategoryValueSleepAnalysis.asleepDeep.rawValue,
+                                    HKCategoryValueSleepAnalysis.asleepREM.rawValue]
+            // Merge overlapping intervals so two sources aren't double-counted.
+            let intervals = samples.filter { asleep.contains($0.value) }
+                .map { ($0.startDate, $0.endDate) }
+                .sorted { $0.0 < $1.0 }
+            var total: TimeInterval = 0
+            var current: (Date, Date)?
+            for iv in intervals {
+                if let c = current, iv.0 <= c.1 {
+                    current = (c.0, max(c.1, iv.1))
+                } else {
+                    if let c = current { total += c.1.timeIntervalSince(c.0) }
+                    current = iv
+                }
+            }
+            if let c = current { total += c.1.timeIntervalSince(c.0) }
+            return total >= 1800 ? total / 3600 : nil
+        } catch {
+            return nil
+        }
     }
 
     /// Imports daily resting HR (e.g. from Apple Watch) for days without a readiness check.

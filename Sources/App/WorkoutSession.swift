@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import UIKit
 import ActivityKit
+import AVFoundation
 
 // MARK: - Draft (autosave / crash recovery)
 
@@ -257,6 +258,22 @@ final class WorkoutSession: ObservableObject {
     private var breathInhaleNext = true
     private var breathingUsed = false
     private var currentRoundStartHeadMoves = 0
+    private var roundStartBounces = 0
+    private var roundStartChin: Double = 0
+    private var roundStartImpacts = 0
+    /// Sensor counts captured at the bell, so rest time isn't counted in the round.
+    private var workEndCounts: (moves: Int, bounces: Int, chin: Double, impacts: Int)?
+    // Live AirPods cues
+    private var firstRoundMovesPerMinute: Double?
+    private var moveWindowStart: (t: TimeInterval, moves: Int)?
+    private var moveCueGiven = false
+    private var chinHighSince: TimeInterval?
+    private var chinCueGiven = false
+    private var chinBaselineSet = false
+    /// Bag hits heard by the microphone this session.
+    @Published private(set) var bagHits = 0
+    private let debriefVoice = AVSpeechSynthesizer()
+    private var strapLostSince: Date?
     /// Short-lived banner, e.g. "New record: recovery −38 BPM".
     @Published private(set) var liveRecordBanner: String?
 
@@ -696,7 +713,26 @@ final class WorkoutSession: ObservableObject {
         breathInhaleNext = true
         breathingUsed = false
         currentRoundStartHeadMoves = 0
-        if profile.trackHeadMovement { headMotion.start() }
+        roundStartBounces = 0
+        roundStartChin = 0
+        roundStartImpacts = 0
+        workEndCounts = nil
+        firstRoundMovesPerMinute = nil
+        moveWindowStart = nil
+        moveCueGiven = false
+        chinHighSince = nil
+        chinCueGiven = false
+        chinBaselineSet = false
+        bagHits = 0
+        strapLostSince = nil
+        if profile.trackHeadMovement {
+            headMotion.start()
+            headMotion.trackingChin = roundTimerEnabled
+            headMotion.onNod = profile.nodToStart ? { [weak self] in self?.handleNod() } : nil
+        }
+        let countHits = profile.countBagHits && bagEnabled
+        audio.countBagHits = countHits
+        audio.onBagHit = countHits ? { [weak self] in self?.bagHits += 1 } : nil
         runningPlan = queuedPlan
         queuedPlan = nil
         planBlockIndex = 0
@@ -778,6 +814,9 @@ final class WorkoutSession: ObservableObject {
         isRecording = false
         UIApplication.shared.isIdleTimerDisabled = false
         headMotion.stop()
+        headMotion.onNod = nil
+        audio.onBagHit = nil
+        audio.countBagHits = false
         audio.shutdownAudio()
         endLiveActivity()
     }
@@ -819,6 +858,7 @@ final class WorkoutSession: ObservableObject {
             Task { await health.save(workout: saved, samples: hkSamples, sensor: sensor) }
         }
 
+        speakDebrief(saved, history: store.workouts, profile: current)
         finishedWorkout = saved
         workoutNotes = ""
         activePlan = nil
@@ -893,6 +933,8 @@ final class WorkoutSession: ObservableObject {
             advancePlan(by: dt)
         }
         guideBreathingIfNeeded()
+        evaluateHeadCues()
+        watchStrap(now: now)
 
         if selectedCategory == .lthrTest {
             if !lthrWarmupAnnounced && elapsedSeconds >= 600 {
@@ -949,6 +991,8 @@ final class WorkoutSession: ObservableObject {
         let hr = bpm ?? currentBPM
         if manual { phaseElapsed = 0 }
         currentWorkEndElapsed = elapsedSeconds
+        workEndCounts = (headMotion.totalMoves, headMotion.totalBounces, headMotion.chinUpSeconds, bagHits)
+        headMotion.trackingChin = false
         audio.flushCombos()
         audio.playRoundEndBell()
 
@@ -990,6 +1034,15 @@ final class WorkoutSession: ObservableObject {
         currentRoundStartElapsed = elapsedSeconds
         currentRoundStartStrikes = audio.strikesCuedCount
         currentRoundStartHeadMoves = headMotion.totalMoves
+        roundStartBounces = headMotion.totalBounces
+        roundStartChin = headMotion.chinUpSeconds
+        roundStartImpacts = bagHits
+        workEndCounts = nil
+        headMotion.trackingChin = true
+        moveWindowStart = nil
+        moveCueGiven = false
+        chinHighSince = nil
+        chinCueGiven = false
         roundEndPeakBPM = 0
         audio.playRoundStartBell()
         if let limit = roundsLimit, currentRound == limit, limit > 1 {
@@ -1020,8 +1073,99 @@ final class WorkoutSession: ObservableObject {
             peakBPM: peak,
             stoolDropBPM: stoolDrop,
             strikesCued: max(0, audio.strikesCuedCount - currentRoundStartStrikes),
-            headMoves: headMotion.isReceiving ? max(0, headMotion.totalMoves - currentRoundStartHeadMoves) : nil
+            headMoves: headMotion.isReceiving ? max(0, (workEndCounts?.moves ?? headMotion.totalMoves) - currentRoundStartHeadMoves) : nil,
+            chinUpSeconds: headMotion.isReceiving ? Int(max(0, (workEndCounts?.chin ?? headMotion.chinUpSeconds) - roundStartChin)) : nil,
+            bounces: headMotion.isReceiving ? max(0, (workEndCounts?.bounces ?? headMotion.totalBounces) - roundStartBounces) : nil,
+            impacts: audio.countBagHits ? max(0, (workEndCounts?.impacts ?? bagHits) - roundStartImpacts) : nil
         ))
+        if currentRound == 1, let moves = completedRounds.last?.headMoves {
+            let secs = max(60, workEnd - currentRoundStartElapsed)
+            firstRoundMovesPerMinute = Double(moves) / secs * 60
+        }
+    }
+
+    // MARK: AirPods cues, nod, strap watch, debrief
+
+    /// "Move your head" when head movement falls to half of round 1; "Chin down" when the chin stays up.
+    private func evaluateHeadCues() {
+        guard roundTimerEnabled, !isRestPeriod, headMotion.isReceiving else { return }
+        let p = profile
+        // Learn the guard position a few seconds into round 1.
+        if !chinBaselineSet, currentRound == 1, phaseElapsed >= 6 {
+            headMotion.setChinBaseline()
+            chinBaselineSet = true
+        }
+        guard p.headCues, p.audioCoach.masterEnabled else { return }
+
+        if let ref = firstRoundMovesPerMinute, ref >= 6, !moveCueGiven, currentRound >= 2 {
+            if let w = moveWindowStart {
+                let span = elapsedSeconds - w.t
+                if span >= 30 {
+                    let rate = Double(headMotion.totalMoves - w.moves) / span * 60
+                    if rate < ref * 0.5 {
+                        moveCueGiven = true
+                        audio.announceCoachingCue("Move your head.", enabled: true)
+                    }
+                    moveWindowStart = (elapsedSeconds, headMotion.totalMoves)
+                }
+            } else {
+                moveWindowStart = (elapsedSeconds, headMotion.totalMoves)
+            }
+        }
+
+        if chinBaselineSet, !chinCueGiven {
+            if headMotion.chinLiftNow > HeadMotionTracker.chinLift {
+                if let since = chinHighSince {
+                    if elapsedSeconds - since >= 5 {
+                        chinCueGiven = true
+                        audio.announceCoachingCue("Chin down.", enabled: true)
+                    }
+                } else {
+                    chinHighSince = elapsedSeconds
+                }
+            } else {
+                chinHighSince = nil
+            }
+        }
+    }
+
+    /// Nod on the stool to start the next round early.
+    private func handleNod() {
+        guard isRecording, roundTimerEnabled, isRestPeriod, phaseRemaining > 3, !isInPlanTransition else { return }
+        phaseElapsed = currentPhaseTarget
+    }
+
+    /// Lets Shortcuts and the Live Activity skip the rest.
+    func skipRest() {
+        guard isRecording, roundTimerEnabled, isRestPeriod else { return }
+        phaseElapsed = currentPhaseTarget
+    }
+
+    /// Strap off for 2 minutes during a session: offer to finish.
+    private func watchStrap(now: Date) {
+        let connected = (ble?.isConnected ?? false) && currentBPM > 0
+        if connected {
+            strapLostSince = nil
+        } else if hadSignal {
+            if let since = strapLostSince {
+                if now.timeIntervalSince(since) >= 120 && !requestFinishPrompt {
+                    requestFinishPrompt = true
+                    strapLostSince = now
+                }
+            } else {
+                strapLostSince = now
+            }
+        }
+    }
+
+    private var hadSignal: Bool { !samples.isEmpty }
+
+    private func speakDebrief(_ w: SavedWorkout, history: [SavedWorkout], profile p: AthleteProfile) {
+        guard p.audioCoach.masterEnabled, w.duration >= 300 else { return }
+        let u = AVSpeechUtterance(string: SessionDebrief.text(for: w, history: history, profile: p))
+        u.rate = AVSpeechUtteranceDefaultSpeechRate
+        debriefVoice.usesApplicationAudioSession = false
+        debriefVoice.speak(u)
     }
 
     // MARK: Signature features
@@ -1235,7 +1379,8 @@ final class WorkoutSession: ObservableObject {
             blockResults: blockResults,
             comboEvents: comboEvents,
             headMovesPerMinute: headMovesPerMinute,
-            breathingGuided: breathingUsed
+            breathingGuided: breathingUsed,
+            impactsCount: audio.countBagHits ? bagHits : nil
         )
     }
 

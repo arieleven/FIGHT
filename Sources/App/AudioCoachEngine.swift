@@ -117,12 +117,57 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         }
     }
 
+    /// Listen for bag hits with the phone's microphone (set before the workout starts).
+    var countBagHits = false {
+        didSet {
+            guard oldValue != countBagHits, engine.isRunning else { return }
+            engine.stop()
+            if !countBagHits { removeHitTap() }
+            ensureEngineRunning()
+        }
+    }
+    /// Called on the main actor for every bag hit heard.
+    var onBagHit: (@MainActor () -> Void)?
+    private var hitTapInstalled = false
+    private let hitDetector = ImpactDetectorBox()
+
     private func activateSession() throws {
         let session = AVAudioSession.sharedInstance()
         var options: AVAudioSession.CategoryOptions = [.mixWithOthers]
         if duckMusic { options.insert(.duckOthers) }
-        try session.setCategory(.playback, mode: .spokenAudio, options: options)
+        if countBagHits {
+            // A2DP only: AirPods keep full-quality sound, and the phone's own mic listens.
+            options.formUnion([.allowBluetoothA2DP, .defaultToSpeaker])
+            try session.setCategory(.playAndRecord, mode: .default, options: options)
+        } else {
+            try session.setCategory(.playback, mode: .spokenAudio, options: options)
+        }
         try session.setActive(true)
+    }
+
+    private func installHitTapIfNeeded() {
+        guard countBagHits, !hitTapInstalled else { return }
+        guard AVAudioApplication.shared.recordPermission == .granted else { return }
+        let input = engine.inputNode
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { return }
+        hitDetector.reset(sampleRate: format.sampleRate)
+        let box = hitDetector
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            guard let data = buffer.floatChannelData?[0] else { return }
+            let hits = box.feed(data, count: Int(buffer.frameLength))
+            guard hits > 0 else { return }
+            Task { @MainActor in
+                for _ in 0..<hits { self?.onBagHit?() }
+            }
+        }
+        hitTapInstalled = true
+    }
+
+    private func removeHitTap() {
+        guard hitTapInstalled else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        hitTapInstalled = false
     }
 
     private func ensureEngineRunning() {
@@ -130,6 +175,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         if !engine.isRunning {
             do {
                 try activateSession()
+                installHitTapIfNeeded()
                 try engine.start()
             } catch {
                 print("Audio start error: \(error)")
@@ -158,6 +204,7 @@ final class AudioCoachEngine: NSObject, ObservableObject {
         announcementQueue.removeAll()
         for node in [comboNode, voiceNode, fxNode] { node.stop() }
         engine.stop()
+        removeHitTap()
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
     }
 

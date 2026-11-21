@@ -595,7 +595,11 @@ struct RoundStat: Codable, Identifiable, Equatable {
         case chinUpSeconds, bounces, impacts
     }
 
-    init(id: UUID = UUID(), roundNumber: Int, startElapsed: TimeInterval, endElapsed: TimeInterval, avgBPM: Int, peakBPM: Int, stoolDropBPM: Int?, strikesCued: Int = 0, headMoves: Int? = nil) {
+    init(id: UUID = UUID(), roundNumber: Int, startElapsed: TimeInterval, endElapsed: TimeInterval, avgBPM: Int, peakBPM: Int, stoolDropBPM: Int?, strikesCued: Int = 0, headMoves: Int? = nil,
+         chinUpSeconds: Int? = nil, bounces: Int? = nil, impacts: Int? = nil) {
+        self.chinUpSeconds = chinUpSeconds
+        self.bounces = bounces
+        self.impacts = impacts
         self.id = id
         self.roundNumber = roundNumber
         self.startElapsed = startElapsed

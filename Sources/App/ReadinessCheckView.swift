@@ -5,6 +5,8 @@ import SwiftUI
 struct ReadinessCheckView: View {
     @EnvironmentObject var bleManager: BLEHeartRateManager
     @EnvironmentObject var workoutStore: WorkoutStore
+    @EnvironmentObject var healthKit: HealthKitManager
+    @State private var sleepHours: Double?
     @Environment(\.dismiss) private var dismiss
 
     private enum Phase { case intro, measuring, questions, result }
@@ -186,11 +188,25 @@ struct ReadinessCheckView: View {
 
     private var questions: some View {
         VStack(alignment: .leading, spacing: 20) {
+            Color.clear.frame(height: 0)
+                .task {
+                    guard sleepHours == nil, let h = await healthKit.lastNightSleepHours() else { return }
+                    sleepHours = h
+                    sleepQuality = SleepScore.quality(hours: h)
+                }
             Text("How do you feel?")
                 .font(.title2.weight(.bold))
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Sleep quality").font(.headline)
+                HStack {
+                    Text("Sleep quality").font(.headline)
+                    Spacer()
+                    if let h = sleepHours {
+                        Label(String(format: "%.1f h from Apple Health", h), systemImage: "bed.double.fill")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.indigo)
+                    }
+                }
                 Picker("Sleep quality", selection: $sleepQuality) {
                     Text("Awful").tag(1)
                     Text("Poor").tag(2)
@@ -359,7 +375,7 @@ struct ReadinessCheckView: View {
         } else {
             rhr = bleManager.currentBPM
         }
-        let reading = ReadinessReading(
+        var reading = ReadinessReading(
             durationSeconds: duration,
             restingHR: rhr,
             rmssd: rmssd,
@@ -367,6 +383,7 @@ struct ReadinessCheckView: View {
             sleepQuality: sleepQuality,
             soreness: soreness
         )
+        reading.sleepHours = sleepHours
         workoutStore.addReadiness(reading)
         if soreness >= 3 {
             let severity = soreness >= 5 ? 3 : 2
