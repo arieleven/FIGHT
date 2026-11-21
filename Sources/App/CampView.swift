@@ -16,6 +16,7 @@ struct CampView: View {
     @State private var isGeneratingReport = false
     @State private var reportError: String?
     @State private var showingWarmUp = false
+    @State private var showingStory = false
 
     var body: some View {
         let profile = workoutStore.activeProfile
@@ -60,13 +61,23 @@ struct CampView: View {
             }
             .navigationTitle("Fight Camp")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if let fight = profile.fightDate, fight > Date() {
+                        Button {
+                            showingStory = true
+                        } label: {
+                            Label("Share countdown", systemImage: "square.and.arrow.up")
+                        }
+                    }
                     Button {
                         showingWeighIn = true
                     } label: {
                         Label("Log Weigh-In", systemImage: "scalemass")
                     }
                 }
+            }
+            .sheet(isPresented: $showingStory) {
+                StoryShareSheet(focus: .countdown)
             }
             .sheet(isPresented: $showingFightSetup) {
                 FightSetupSheet()

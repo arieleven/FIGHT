@@ -175,12 +175,20 @@ struct DriversCard: View {
 
 struct BenchmarkCard: View {
     let attempts: [Benchmark.Attempt]
+    var onShare: (() -> Void)? = nil
     let onRun: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("FIGHT Benchmark", systemImage: "chart.line.uptrend.xyaxis")
-                .font(.title3.weight(.bold))
+            HStack {
+                Label("FIGHT Benchmark", systemImage: "chart.line.uptrend.xyaxis")
+                    .font(.title3.weight(.bold))
+                Spacer()
+                if attempts.count >= 2, let onShare {
+                    Button(action: onShare) { Image(systemName: "square.and.arrow.up") }
+                        .accessibilityLabel("Share your progress")
+                }
+            }
             if attempts.isEmpty {
                 Text("A fixed 5 × 3 min test. Same work every time, so a lower heart rate and faster recovery prove you're fitter. Run it every 4 weeks.")
                     .font(.footnote)
@@ -530,18 +538,29 @@ struct RecordsView: View {
 /// Shown at the top of a workout when it set new personal records.
 struct NewRecordsBanner: View {
     let records: [PersonalRecord]
+    var onShare: (() -> Void)? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(records.count == 1 ? "New personal record!" : "\(records.count) new personal records!", systemImage: "trophy.fill")
-                .font(.headline)
-                .foregroundStyle(.orange)
+            HStack {
+                Label(records.count == 1 ? "New personal record!" : "\(records.count) new personal records!", systemImage: "trophy.fill")
+                    .font(.headline)
+                    .foregroundStyle(.orange)
+                Spacer()
+                if let onShare {
+                    Button(action: onShare) {
+                        Label("Share", systemImage: "square.and.arrow.up").font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                    .controlSize(.small)
+                }
+            }
             ForEach(records) { r in
                 Text("\(r.title): \(r.valueText)").font(.subheadline)
             }
         }
         .card(tint: .orange)
-        .accessibilityElement(children: .combine)
     }
 }
 

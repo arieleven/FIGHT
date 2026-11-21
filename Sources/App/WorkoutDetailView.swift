@@ -6,6 +6,7 @@ struct WorkoutDetailView: View {
     @EnvironmentObject var healthKit: HealthKitManager
     let workout: SavedWorkout
     @State private var isSavingToHealth = false
+    @State private var storyFocus: StoryCardKind?
     @State private var exportURL: URL?
 
     @State private var selectedElapsed: Double?
@@ -63,7 +64,7 @@ struct WorkoutDetailView: View {
                 let newRecords = Records.newRecords(in: workout, workouts: workoutStore.workouts,
                                                     profile: workoutStore.profile(for: workout))
                 if !newRecords.isEmpty {
-                    NewRecordsBanner(records: newRecords)
+                    NewRecordsBanner(records: newRecords) { storyFocus = .record }
                 }
                 headerSummaryCard
                 SessionRatingCard(workoutID: workout.id)
@@ -105,10 +106,17 @@ struct WorkoutDetailView: View {
             }
             .padding()
         }
+        .sheet(item: $storyFocus) { kind in StoryShareSheet(focus: kind, workout: workout) }
         .navigationTitle(workout.category.rawValue)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    storyFocus = .session
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .accessibilityLabel("Share to your story")
                 if healthKit.isAvailable {
                     Button {
                         guard !healthKit.isSaved(workout), !isSavingToHealth else { return }

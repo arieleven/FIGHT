@@ -14,7 +14,7 @@ struct CoachView: View {
     @State private var insights = CoachInsights()
     @State private var showingBreathing = false
     @State private var showingSoreness = false
-    @State private var shareImage: ShareableImage?
+    @State private var storyFocus: StoryCardKind?
     @State private var showingFightSetup = false
 
     var body: some View {
@@ -48,7 +48,7 @@ struct CoachView: View {
             .sheet(isPresented: $showingBreathing) { BreathingTrainerView() }
             .sheet(isPresented: $showingFightSetup) { FightSetupSheet() }
             .sheet(isPresented: $showingSoreness, onDismiss: refresh) { SorenessLogSheet() }
-            .sheet(item: $shareImage) { item in ShareSheet(items: [item.image]) }
+            .sheet(item: $storyFocus) { kind in StoryShareSheet(focus: kind) }
             .sheet(item: $selectedMetric) { metric in
                 MetricDetailSheet(metric: metric)
                     .presentationDetents([.medium, .large])
@@ -85,14 +85,6 @@ struct CoachView: View {
         showingReadinessCheck = true
     }
 
-    private func shareFighterCard(_ report: CoachReport) {
-        let profile = workoutStore.activeProfile
-        let records = Records.all(workouts: workoutStore.workouts, profile: profile).count
-        if let image = FighterCardView.render(name: profile.name, report: report, gasTank: insights.gasTank?.headline,
-                                              fightDate: profile.fightDate, recordCount: records) {
-            shareImage = ShareableImage(image: image)
-        }
-    }
 
     @ViewBuilder
     private func content(_ report: CoachReport) -> some View {
@@ -154,7 +146,9 @@ struct CoachView: View {
                         loadChartCard(report)
                     }
                     if let g = insights.gasTank { GasTankCard(result: g) }
-                    BenchmarkCard(attempts: insights.benchmarkAttempts) { navigation.run(PlanTemplates.benchmark) }
+                    BenchmarkCard(attempts: insights.benchmarkAttempts, onShare: { storyFocus = .progress }) {
+                        navigation.run(PlanTemplates.benchmark)
+                    }
                     if let c = insights.comboCost { ComboCostCard(result: c) }
                     driversSection
                     if tips.count > 1 {
@@ -393,7 +387,7 @@ struct CoachView: View {
             }
             Spacer(minLength: 0)
             Button {
-                shareFighterCard(report)
+                storyFocus = .fighter
             } label: {
                 Image(systemName: "square.and.arrow.up")
                     .font(.body.weight(.semibold))
@@ -401,7 +395,7 @@ struct CoachView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .accessibilityLabel("Share fighter card")
+            .accessibilityLabel("Share to your story")
         }
         .card()
     }

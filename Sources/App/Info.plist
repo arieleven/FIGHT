@@ -97,6 +97,12 @@
 			</dict>
 		</dict>
 	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>instagram-stories</string>
+	</array>
+	<key>FacebookAppID</key>
+	<string>1320411766881372</string>
 	<key>NSMotionUsageDescription</key>
 	<string>FIGHT uses your AirPods' motion sensors to count head movement (slips and rolls) during rounds.</string>
 	<key>NSCameraUsageDescription</key>
