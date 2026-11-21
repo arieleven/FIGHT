@@ -58,6 +58,8 @@ struct ProfileSettingsView: View {
                             Label(profile.name == SampleData.profileName ? "Remove Sample Data" : "Delete Current Profile", systemImage: "trash")
                         }
                     }
+                } header: {
+                    Text("Fighter")
                 } footer: {
                     if profile.name == SampleData.profileName {
                         Text("A sample fighter with 3 sessions, a week of morning checks and weigh-ins, and a fight in 5 weeks. Your own data is untouched. Switch back with the Fighter picker.")

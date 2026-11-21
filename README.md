@@ -45,7 +45,15 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 
 ## Features
 
-### 🥊 Live Corner: real-time round tracking
+### 👊 Simple by design
+- **Four tabs**: Train, Coach (with your fight camp inside it), History, You
+- **Starts the way you left it**: your last setup is remembered for each workout type, and the Start button says exactly what it will do
+- **Quick start**: Last workout, Coach's pick or a Plan, in one tap
+- **Coach answers first**: "Today: train hard / go easy / rest", then one button to load that session
+- **Units your way**: tap or swipe the unit next to any height or weight to switch cm ⇄ ft/in and kg ⇄ lb
+- **Try it with sample data**: You → Try FIGHT With Sample Data adds a sample fighter with three realistic sessions, a week of morning checks and an upcoming fight
+
+### 🥊 Train: real-time round tracking
 - **Live BPM and zones**: Garmin-style display with a 5-zone bar, current zone, elapsed time, and active vs. total calories
 - **Round bell and corner timer**: work/rest intervals from 0:30 to 5:00, a gym-style bell and clapper, "Round 3 in 10 seconds" calls, and haptics on every bell
 - **Crash-safe recording**: progress is autosaved every 30 seconds. If the app is closed mid-session, FIGHT offers to recover the workout on next launch
@@ -102,7 +110,7 @@ Generic fitness apps are built for runners. Fighters train in **rounds**, recove
 - **Breathing trainer**: paced in-4, out-6 breathing with a live coherence meter from your strap, optional breathing tones on the stool, and a check of whether it actually improves your recovery
 - **Soreness map**: tap where it hurts in the morning check. The coach adjusts today's advice and spots patterns, like shin soreness after back-to-back kicking days
 - **Records and badges**: personal records (best recovery, most hard rounds, longest Zone 2, most strikes called) with a spoken alert the moment you beat your best recovery
-- **Fighter card**: a shareable image of your Fight Fitness, ratings and gas tank
+- **Share to your Instagram story**: five story cards (session with your heart-rate trace, benchmark progress, fighter card, new record, fight countdown), sent to Instagram as a movable sticker, with switches to hide your name and weight or show only improvements
 - **Hands-free with Siri**: "Start bag coach in FIGHT", "End round in FIGHT", "FIGHT readiness check", with gloves on
 
 ### 📅 Fight Camp: plan, cut, report
@@ -215,7 +223,10 @@ FIGHT/
     │   ├── FightApp.swift              # Tab shell and dependency injection
     │   ├── BLEHeartRateManager.swift   # Universal BLE Heart Rate Profile, RR, device info, auto-reconnect
     │   ├── WorkoutSession.swift        # Live workout engine: timing, rounds, autosave, saving
-    │   ├── LiveWorkoutView.swift       # Live Corner UI
+    │   ├── LiveWorkoutView.swift       # Train tab: quick start, live rounds
+    │   ├── StoryShare.swift            # Instagram story cards and sharing
+    │   ├── OnboardingView.swift        # First launch and morning check prompt
+    │   ├── SampleData.swift            # Sample fighter for trying the app
     │   ├── BagCoach.swift              # Strikes, stance, difficulty, combo generator
     │   ├── BagSettingsView.swift       # Bag coach settings and custom-combo builder
     │   ├── AudioCoachEngine.swift      # Sequenced voice combos, bells, clapper, spoken coaching
@@ -228,7 +239,7 @@ FIGHT/
     │   ├── CoachView.swift             # Coach tab
     │   ├── ReadinessCheckView.swift    # 2-minute morning HRV / resting HR check
     │   ├── CampPlanner.swift           # Periodization and weight-cut analysis
-    │   ├── CampView.swift              # Fight Camp tab
+    │   ├── CampView.swift              # Fight camp (inside Coach)
     │   ├── WeeklyReport.swift          # PDF report rendering
     │   ├── PlanViews.swift             # Plan library, builder, sharing, QR scan, import, results
     │   ├── PlanSupport.swift           # Per-fighter zone resolution, result packaging

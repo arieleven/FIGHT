@@ -244,3 +244,29 @@ final class DriversAndBodyTests: XCTestCase {
         XCTAssertEqual(count, 2)
     }
 }
+
+final class UnitTests: XCTestCase {
+
+    func testHeightFeetInchesRoundTrip() {
+        let fi = HeightUnits.feetInches(178)
+        XCTAssertEqual(fi.feet, 5)
+        XCTAssertEqual(fi.inches, 10)
+        XCTAssertEqual(HeightUnits.cm(feet: 5, inches: 10), 177.8, accuracy: 0.01)
+        XCTAssertEqual(HeightUnits.text(178, true), "5′ 10″")
+        XCTAssertEqual(HeightUnits.text(178.4, false), "178 cm")
+    }
+
+    func testWeightConversionIsLossless() {
+        let kg = 72.4
+        let lb = WeightUnits.value(kg, true)
+        XCTAssertEqual(WeightUnits.toKg(lb, true), kg, accuracy: 1e-9)
+        XCTAssertEqual(WeightUnits.text(70, true), "154.3 lb")
+    }
+
+    func testOldProfilesKeepTheirWeightUnitForHeight() throws {
+        let json = #"{"name":"Old","useImperial":true}"#
+        let p = try JSONDecoder().decode(AthleteProfile.self, from: Data(json.utf8))
+        XCTAssertTrue(p.useImperial)
+        XCTAssertTrue(p.heightImperial, "people who chose pounds get feet too")
+    }
+}
