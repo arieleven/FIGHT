@@ -170,11 +170,11 @@ final class HealthKitManager: ObservableObject {
         savedWorkoutIDs.contains(workout.id)
     }
 
-    /// Writes the workout, its heart-rate samples and active calories to Health.
-    /// Returns true on success. Safe to call twice: already-saved workouts are skipped.
-    @discardableResult
     private var routeAuthorizationAsked: Bool { UserDefaults.standard.bool(forKey: "fight.health.routeAsked") }
 
+    /// Writes the workout, its heart-rate samples, active calories and (for runs) distance and
+    /// route to Health. Returns true on success. Safe to call twice: already-saved workouts are skipped.
+    @discardableResult
     func save(workout: SavedWorkout, samples: [HeartRatePoint], sensor: SensorInfo? = nil, route: [RoutePoint] = []) async -> Bool {
         guard isAvailable else { return false }
         guard !savedWorkoutIDs.contains(workout.id) else { return true }
